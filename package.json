@@ -1,0 +1,111 @@
+{
+  "name": "ibra-crom",
+  "productName": "IBRA CROM",
+  "version": "1.1.0",
+  "description": "IBRA CROM — متصفح مبني على محرك Chromium مع دعم إضافات سوق Chrome. برمجة و تطوير ابراهيم الخزرجي",
+  "main": "src/main.js",
+  "author": {
+    "name": "Ibrahim Al-Khazraji - ابراهيم الخزرجي"
+  },
+  "license": "GPL-3.0",
+  "homepage": "https://t.me/ibraprogram",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win nsis --x64"
+  },
+  "dependencies": {
+    "electron-chrome-extensions": "4.9.0",
+    "electron-chrome-web-store": "0.13.0"
+  },
+  "devDependencies": {
+    "electron": "^38.0.0",
+    "electron-builder": "^26.0.0"
+  },
+  "build": {
+    "appId": "com.ibrahim.ibracrom",
+    "productName": "IBRA CROM",
+    "copyright": "© 2026 برمجة و تطوير ابراهيم الخزرجي",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "!src/test-shot.js",
+      "package.json"
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "executableName": "IBRA CROM",
+      "legalTrademarks": "IBRA CROM",
+      "fileAssociations": [
+        {
+          "ext": [
+            "htm",
+            "html"
+          ],
+          "name": "IBRA CROM HTML",
+          "description": "صفحة ويب",
+          "role": "Viewer"
+        },
+        {
+          "ext": "pdf",
+          "name": "IBRA CROM PDF",
+          "description": "مستند PDF",
+          "role": "Viewer"
+        }
+      ]
+    },
+    "protocols": [
+      {
+        "name": "Web",
+        "schemes": [
+          "http",
+          "https"
+        ]
+      }
+    ],
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "IBRA CROM",
+      "uninstallDisplayName": "IBRA CROM",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "installerSidebar": "build/installerSidebar.bmp",
+      "uninstallerSidebar": "build/installerSidebar.bmp",
+      "language": "1025",
+      "installerLanguages": [
+        "ar_SA",
+        "en_US"
+      ],
+      "multiLanguageInstaller": false,
+      "include": "build/installer.nsh",
+      "artifactName": "IBRA-CROM-Setup-${version}.${ext}",
+      "deleteAppDataOnUninstall": false,
+      "runAfterFinish": true
+    },
+    "publish": null,
+    "asarUnpack": [
+      "src/builtin/**"
+    ]
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ibrata2/iBRACROM.git"
+  }
+}

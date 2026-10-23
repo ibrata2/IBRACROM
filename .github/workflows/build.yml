@@ -1,0 +1,37 @@
+name: Build IBRA CROM
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Build installer
+        run: npx electron-builder --win nsis --x64 --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: IBRA-CROM-Setup
+          path: dist/*.exe
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: IBRA CROM ${{ github.ref_name }}
+          body: |
+            IBRA CROM — متصفح مبني على Chromium مع دعم إضافات سوق Chrome و IBDM Pro مدمج.
+            برمجة و تطوير ابراهيم الخزرجي
+          files: |
+            dist/*.exe
+            dist/*.blockmap

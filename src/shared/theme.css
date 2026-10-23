@@ -1,0 +1,109 @@
+[hidden] { display: none !important; }
+/* IBRA CROM — ألوان وخطوط مشتركة | برمجة و تطوير ابراهيم الخزرجي */
+@font-face { font-family: 'IBRA Plex'; font-weight: 400; src: url(fonts/ibm-plex-sans-arabic-arabic-400-normal.woff2) format('woff2'); unicode-range: U+0600-06FF, U+0750-077F, U+FB50-FDFF, U+FE70-FEFF; }
+@font-face { font-family: 'IBRA Plex'; font-weight: 500; src: url(fonts/ibm-plex-sans-arabic-arabic-500-normal.woff2) format('woff2'); unicode-range: U+0600-06FF, U+0750-077F, U+FB50-FDFF, U+FE70-FEFF; }
+@font-face { font-family: 'IBRA Plex'; font-weight: 600; src: url(fonts/ibm-plex-sans-arabic-arabic-600-normal.woff2) format('woff2'); unicode-range: U+0600-06FF, U+0750-077F, U+FB50-FDFF, U+FE70-FEFF; }
+@font-face { font-family: 'IBRA Plex'; font-weight: 700; src: url(fonts/ibm-plex-sans-arabic-arabic-700-normal.woff2) format('woff2'); unicode-range: U+0600-06FF, U+0750-077F, U+FB50-FDFF, U+FE70-FEFF; }
+@font-face { font-family: 'IBRA Plex'; font-weight: 400; src: url(fonts/ibm-plex-sans-arabic-latin-400-normal.woff2) format('woff2'); unicode-range: U+0000-00FF, U+2000-206F; }
+@font-face { font-family: 'IBRA Plex'; font-weight: 500; src: url(fonts/ibm-plex-sans-arabic-latin-500-normal.woff2) format('woff2'); unicode-range: U+0000-00FF, U+2000-206F; }
+@font-face { font-family: 'IBRA Plex'; font-weight: 600; src: url(fonts/ibm-plex-sans-arabic-latin-600-normal.woff2) format('woff2'); unicode-range: U+0000-00FF, U+2000-206F; }
+@font-face { font-family: 'IBRA Plex'; font-weight: 700; src: url(fonts/ibm-plex-sans-arabic-latin-700-normal.woff2) format('woff2'); unicode-range: U+0000-00FF, U+2000-206F; }
+
+:root {
+  --font: 'IBRA Plex', 'Segoe UI', Tahoma, system-ui, sans-serif;
+  --red: #e5141e;
+  --red-deep: #9c0a11;
+  --red-glow: rgba(229, 20, 30, .35);
+  --radius: 12px;
+  --ease: cubic-bezier(.2, .8, .2, 1);
+}
+
+/* ── زجاجي (الافتراضي) ── */
+[data-theme="glass"] {
+  --win-bg: linear-gradient(180deg, rgba(255,255,255,.58), rgba(236,236,242,.50));
+  --chrome-bg: rgba(255,255,255,.40);
+  --toolbar-bg: linear-gradient(180deg, rgba(255,255,255,.86), rgba(250,250,252,.78));
+  --tab-hover: rgba(255,255,255,.45);
+  --tab-active: linear-gradient(180deg, rgba(255,255,255,.95), rgba(252,252,253,.88));
+  --field-bg: rgba(255,255,255,.62);
+  --field-bg-focus: #ffffff;
+  --panel-bg: rgba(255,255,255,.80);
+  --panel-solid: rgba(250,250,252,.96);
+  --card-bg: rgba(255,255,255,.55);
+  --card-border: rgba(255,255,255,.85);
+  --line: rgba(20,20,30,.10);
+  --line-strong: rgba(20,20,30,.16);
+  --text: #17171c;
+  --muted: #5d5d69;
+  --icon: #2a2a31;
+  --hover: rgba(20,20,30,.07);
+  --press: rgba(20,20,30,.12);
+  --shadow: 0 12px 40px rgba(20,20,40,.18), 0 2px 8px rgba(20,20,40,.08);
+  --sheen: linear-gradient(180deg, rgba(255,255,255,.9), rgba(255,255,255,0));
+  --page-bg: transparent;
+  color-scheme: light;
+}
+[data-theme="glass"].no-blur {
+  --win-bg: linear-gradient(160deg, #f4f4f7 0%, #e7e7ec 55%, #f1eded 100%);
+}
+
+/* ── أبيض عادي ── */
+[data-theme="light"] {
+  --win-bg: #eceef1;
+  --chrome-bg: #eceef1;
+  --toolbar-bg: #ffffff;
+  --tab-hover: rgba(0,0,0,.05);
+  --tab-active: #ffffff;
+  --field-bg: #f1f2f4;
+  --field-bg-focus: #ffffff;
+  --panel-bg: #ffffff;
+  --panel-solid: #ffffff;
+  --card-bg: #ffffff;
+  --card-border: #e4e5e9;
+  --line: #e3e4e8;
+  --line-strong: #d3d5da;
+  --text: #1a1a1f;
+  --muted: #62636d;
+  --icon: #33343b;
+  --hover: rgba(0,0,0,.06);
+  --press: rgba(0,0,0,.11);
+  --shadow: 0 10px 34px rgba(0,0,0,.14), 0 2px 6px rgba(0,0,0,.06);
+  --sheen: none;
+  --page-bg: #f6f7f9;
+  color-scheme: light;
+}
+
+/* ── ليلي ── */
+[data-theme="dark"] {
+  --win-bg: #131316;
+  --chrome-bg: #131316;
+  --toolbar-bg: #212126;
+  --tab-hover: rgba(255,255,255,.05);
+  --tab-active: #212126;
+  --field-bg: #2c2c33;
+  --field-bg-focus: #33333b;
+  --panel-bg: #26262c;
+  --panel-solid: #26262c;
+  --card-bg: #1f1f24;
+  --card-border: #2f2f37;
+  --line: rgba(255,255,255,.08);
+  --line-strong: rgba(255,255,255,.14);
+  --text: #f1f1f4;
+  --muted: #a3a3ad;
+  --icon: #e2e2e7;
+  --hover: rgba(255,255,255,.08);
+  --press: rgba(255,255,255,.14);
+  --shadow: 0 14px 44px rgba(0,0,0,.55), 0 2px 8px rgba(0,0,0,.35);
+  --sheen: none;
+  --page-bg: #161619;
+  --red: #ff2b35;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; font-family: var(--font); color: var(--text); -webkit-font-smoothing: antialiased; }
+button { font: inherit; color: inherit; }
+::selection { background: var(--red-glow); }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 10px; border: 2px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-track { background: transparent; }
