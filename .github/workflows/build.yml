@@ -36,6 +36,13 @@ jobs:
         with:
           name: IBRA-CROM-Setup
           path: dist/*.exe
+      - name: Release notes
+        shell: bash
+        env:
+          MSG: ${{ github.event.head_commit.message }}
+        run: |
+          printf '%s\n' "$MSG" | grep -viE '^(co-authored-by|claude-session|signed-off-by):' > notes.md
+          printf '\n—\nIBRA CROM — برمجة و تطوير ابراهيم الخزرجي\n' >> notes.md
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
@@ -43,11 +50,7 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: IBRA CROM v${{ steps.ver.outputs.v }}
           make_latest: true
-          body: |
-            ${{ github.event.head_commit.message }}
-
-            —
-            IBRA CROM — برمجة و تطوير ابراهيم الخزرجي
+          body_path: notes.md
           files: |
             dist/*.exe
             dist/*.blockmap

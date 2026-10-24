@@ -8,7 +8,7 @@ module.exports = function createUpdater(ctx) {
   const supported = app.isPackaged && process.platform === 'win32'
   const set = (p) => { Object.assign(st, p); ctx.changed() }
   const strip = (h) => String(Array.isArray(h) ? h.map(x => x.note || '').join('\n') : (h || ''))
-    .replace(/<br\s*\/?>/gi, '\n').replace(/<\/(p|li|h\d)>/gi, '\n').replace(/<li>/gi, '• ').replace(/<[^>]+>/g, '').replace(/\n{3,}/g, '\n\n').trim()
+    .replace(/<br\s*\/?>/gi, '\n').replace(/<\/(p|li|h\d)>/gi, '\n').replace(/<li>/gi, '• ').replace(/<[^>]+>/g, '').split('\n').filter(l => !/^\s*(co-authored-by|claude-session|signed-off-by):/i.test(l)).join('\n').replace(/\n{3,}/g, '\n\n').trim()
 
   function init() {
     if (process.env.IBRA_TEST_UPDATE) { // معاينة الواجهة فقط
