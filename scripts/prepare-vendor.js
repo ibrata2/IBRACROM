@@ -82,10 +82,10 @@ async function tor() {
 
 ;(async () => {
   const jobs = []
-  if (!args.length || args.includes('--adblock')) jobs.push(['adblock', adblock])
-  if (!args.length || args.includes('--shield')) jobs.push(['shield', shield])
+  if (!args.includes('--no-adblock')) jobs.push(['adblock', adblock])
+  if (!args.includes('--no-shield')) jobs.push(['shield', shield])
   if (args.includes('--tor')) jobs.push(['tor', tor])
   let failed = false
-  for (const [n, f] of jobs) { try { await f() } catch (e) { console.error(`✗ ${n}: ${e.message}`); if (n === 'tor' && args.includes('--require-tor')) failed = true } }
+  for (const [n, f] of jobs) { try { await f() } catch (e) { console.error(`✗ ${n}: ${e.message}`); if ((n === 'tor' && args.includes('--require-tor')) || (n === 'adblock' && args.includes('--require-tor'))) failed = true } }
   process.exit(failed ? 1 : 0)
 })()
