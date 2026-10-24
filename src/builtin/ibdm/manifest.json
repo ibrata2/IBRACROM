@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "IBDM Pro",
   "short_name": "IBDM Pro",
-  "version": "1.0.0",
+  "version": "1.0.32",
   "description": "يلتقط التحميلات والفيديوهات من أي موقع ويرسلها لبرنامج IBDM Pro — برمجة و تطوير ابراهيم الخزرجي",
   "permissions": [
     "downloads",

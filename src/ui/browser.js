@@ -29,7 +29,7 @@ const frame = $('frame')
 new ResizeObserver(() => api.send('ui:height', frame.offsetHeight)).observe(frame)
 
 // ═════════ الحالة ═════════
-api.on('state', (s) => { const changed = S.activeId !== s.activeId; S = s; if (changed && S.activeId) { if ($('closedpanel').hidden) closePanels(); else for (const p of ['suggest', 'menu', 'dlpanel']) $(p).hidden = true; if (document.activeElement === $('address')) $('address').blur() } render() })
+api.on('state', (s) => { const changed = S.activeId !== s.activeId; S = s; if (changed && S.activeId) { if ($('closedpanel').hidden && $('proxypanel').hidden) closePanels(); else for (const p of ['suggest', 'menu', 'dlpanel', 'shieldpanel']) $(p).hidden = true; if (document.activeElement === $('address')) $('address').blur() } render() })
 api.on('focus-address', () => { closePanels(); const a = $('address'); a.focus(); a.select() })
 api.on('downloads', (list) => { downloads = list; renderDl() })
 api.on('downloads:started', () => { const b = $('dlbtn'); b.hidden = false; b.classList.remove('pulse'); void b.offsetWidth; b.classList.add('pulse') })
@@ -49,7 +49,9 @@ function render() {
   if (!editing) $('address').value = n.url || ''
   const si = $('siteinfo')
   si.className = 'chip'
-  if (n.internal) { si.classList.add('ibra'); si.innerHTML = `<img src="../assets/logo64.png" alt="">IBRA`; si.title = 'صفحة داخلية آمنة' }
+  if (n.blocked) { si.classList.add('danger'); si.innerHTML = I.bug + '<span>موقع خطير</span>'; si.title = 'IBRA Shield أوقف هذا الموقع' }
+  else if (n.proxied && n.url) { si.classList.add('proxy'); si.innerHTML = I.proxy + '<span>بروكسي</span>'; si.title = 'هذا اللسان يعمل عبر البروكسي' }
+  else if (n.internal) { si.classList.add('ibra'); si.innerHTML = `<img src="../assets/logo64.png" alt="">IBRA`; si.title = 'صفحة داخلية آمنة' }
   else if (!n.url) { si.innerHTML = I.search; si.title = '' }
   else if (n.error) { si.classList.add('insecure'); si.innerHTML = I.warn; si.title = 'تعذر الوصول' }
   else if (n.secure) { si.classList.add('secure'); si.innerHTML = I.lock; si.title = 'الاتصال آمن' }
@@ -63,7 +65,11 @@ function render() {
   z.hidden = !n.zoom || n.zoom === 100
   z.textContent = (n.zoom || 100) + '%'
   const act = $('actions')
+  // أزرار الإضافات تتبع جلسة اللسان (عادي / بروكسي)
+  const part = n.partition || ''
+  if ((act.getAttribute('partition') || '') !== part) { if (part) act.setAttribute('partition', part); else act.removeAttribute('partition') }
   if (n.tabId && act.getAttribute('tab') !== String(n.tabId)) act.setAttribute('tab', String(n.tabId))
+  renderFeatures()
   renderBookmarks()
   renderClosed()
 }
@@ -92,6 +98,9 @@ function renderTabs() {
     title.textContent = t.title
     title.dir = hasArabic(t.title) ? 'rtl' : 'ltr'
     el.title = t.title + (t.url && !t.internal ? '\n' + t.url : '')
+    el.classList.toggle('proxied', !!t.proxied)
+    const px = el.querySelector('.pxy')
+    px.hidden = !t.proxied
     const snd = el.querySelector('.snd')
     snd.hidden = !(t.audible || t.muted)
     snd.innerHTML = t.muted ? I.muted : I.audio
@@ -103,7 +112,7 @@ function makeTab(id) {
   el.className = 'tab'
   el.setAttribute('role', 'tab')
   el.draggable = true
-  el.innerHTML = `<i class="stripe"></i><span class="fav"></span><span class="title"></span><button class="snd" hidden title="كتم/تشغيل الصوت"></button><button class="x" title="إغلاق (Ctrl+W)">${I.close}</button>`
+  el.innerHTML = `<i class="stripe"></i><span class="fav"></span><span class="pxy" hidden title="هذا اللسان يعمل عبر البروكسي">${I.proxy}</span><span class="title"></span><button class="snd" hidden title="كتم/تشغيل الصوت"></button><button class="x" title="إغلاق (Ctrl+W)">${I.close}</button>`
   el.addEventListener('mousedown', (e) => { if (e.button === 0 && !e.target.closest('.x,.snd')) api.send('tab:activate', id) })
   el.addEventListener('auxclick', (e) => { if (e.button === 1) { e.preventDefault(); api.send('tab:close', id) } })
   el.addEventListener('mouseup', (e) => { if (e.button === 1) e.preventDefault() })
@@ -140,6 +149,8 @@ $('home').onclick = () => api.send('nav:home')
 $('star').onclick = () => api.send('bookmark:toggle')
 $('zoomchip').onclick = () => api.send('nav:zoom', 0)
 $('extbtn').onclick = () => api.send('menu:action', 'extensions')
+$('proxybtn').insertAdjacentHTML('afterbegin', I.proxy)
+$('shieldbtn').insertAdjacentHTML('afterbegin', I.shield)
 for (const id of ['back', 'forward']) $(id).addEventListener('auxclick', (e) => { if (e.button === 1) api.send(id === 'back' ? 'nav:back' : 'nav:forward') })
 
 // ═════════ شريط العنوان والاقتراحات ═════════
@@ -207,7 +218,7 @@ function markSel() {
 }
 
 // ═════════ اللوحات ═════════
-const PANELS = ['suggest', 'menu', 'dlpanel', 'closedpanel']
+const PANELS = ['suggest', 'menu', 'dlpanel', 'closedpanel', 'proxypanel', 'shieldpanel']
 function anyOpen() { return PANELS.some(id => !$(id).hidden) }
 function syncOverlay() {
   const on = anyOpen()
@@ -222,7 +233,7 @@ function showPanel(id, keepOthers) {
 function hidePanel(id) { if (!$(id).hidden) { $(id).hidden = true; syncOverlay() } }
 function closePanels() { for (const p of PANELS) $(p).hidden = true; syncOverlay() }
 $('overlay').addEventListener('mousedown', (e) => { if (e.target.id === 'overlay') { closePanels(); if (document.activeElement === addr) addr.blur() } })
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && (!$('menu').hidden || !$('dlpanel').hidden || !$('closedpanel').hidden)) closePanels() })
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && PANELS.some(id => id !== 'suggest' && !$(id).hidden)) closePanels() })
 
 // ═════════ القائمة الرئيسية ═════════
 $('menubtn').onclick = () => { if (!$('menu').hidden) return closePanels(); buildMenu(); showPanel('menu') }
@@ -235,6 +246,7 @@ function buildMenu() {
   m.innerHTML = [
     item('newTab', I.tab, 'علامة تبويب جديدة', 'Ctrl+T'),
     item('newWindow', I.window, 'نافذة جديدة', 'Ctrl+N'),
+    ...((S.features?.proxy?.enabled !== false) ? [item('proxyTab', I.proxy, 'لسان بروكسي جديد', 'Ctrl+Shift+N')] : []),
     sep,
     item('history', I.history, 'السجل', 'Ctrl+H'),
     item('downloads', I.download, 'التنزيلات', 'Ctrl+J'),
@@ -390,6 +402,70 @@ $('tabstrip').addEventListener('contextmenu', (e) => { if (e.target.closest('.ta
 // ═════════ تنبيه سريع ═════════
 let toastT
 api.on('toast', (msg) => { const t = $('toast'); t.textContent = msg; t.style.top = Math.max(4, frame.offsetHeight - 36) + 'px'; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => { t.hidden = true }, 3200) })
+
+// ═════════ IBRA Proxy / AdBlock / Shield ═════════
+const fmtN = (n) => (n || 0).toLocaleString('en-US')
+function renderFeatures() {
+  const F = S.features || {}, n = S.nav || {}
+  const P = F.proxy || {}, A = F.adblock || {}
+  const pb = $('proxybtn')
+  pb.hidden = P.enabled === false
+  pb.classList.toggle('on', !!n.proxied)
+  const dot = pb.querySelector('.pdot')
+  dot.hidden = !n.proxied
+  dot.className = 'pdot ' + (P.status === 'ready' ? 'ready' : P.status === 'error' ? 'error' : '')
+  pb.title = n.proxied ? 'البروكسي يعمل لهذا اللسان — ' + (P.message || '') : 'تشغيل البروكسي لهذا اللسان فقط'
+  const sb = $('shieldbtn')
+  const adOn = A.enabled !== false && !n.siteAllowed
+  sb.classList.toggle('on', adOn && !!n.host)
+  sb.classList.toggle('off', !adOn)
+  sb.firstElementChild.outerHTML = adOn ? I.shield : I.shieldOff
+  const badge = sb.querySelector('.badge')
+  badge.hidden = !adOn || !n.ads
+  badge.textContent = n.ads > 99 ? '99+' : String(n.ads || 0)
+  sb.title = adOn ? `حاجب الإعلانات — تم حجب ${n.ads || 0} في هذه الصفحة` : 'حاجب الإعلانات متوقف هنا'
+  if (!$('proxypanel').hidden) buildProxyPanel()
+  if (!$('shieldpanel').hidden) buildShieldPanel()
+}
+const sw = (id, on, dis) => `<button class="sw ${on ? 'on' : ''}" id="${id}" ${dis ? 'disabled' : ''}></button>`
+function placePanel(p, btn) {
+  const r = $(btn).getBoundingClientRect()
+  p.style.top = (r.bottom + 6) + 'px'
+  p.style.left = Math.max(8, Math.min(r.left - 10, innerWidth - 345)) + 'px'
+}
+function buildProxyPanel() {
+  const P = (S.features || {}).proxy || {}, n = S.nav || {}
+  const p = $('proxypanel')
+  const st = !n.proxied ? 'off' : P.status === 'ready' ? 'ready' : P.status === 'error' ? 'error' : 'busy'
+  const method = P.mode === 'custom' ? 'بروكسي خاص' : 'شبكة Tor المدمجة'
+  p.innerHTML = `<div class="fp-h"><span class="fic">${I.proxy}</span><div><b>IBRA Proxy</b><small>يعمل على هذا اللسان فقط — باقي الألسن لا تتأثر</small></div></div>
+    <div class="fp-row"><div class="fl"><b>البروكسي لهذا اللسان</b><small>${method}</small></div>${sw('px-tab', n.proxied)}</div>
+    <div class="fp-status ${st}"><i></i><span>${n.proxied ? esc(P.message || 'جاري التحضير…') : 'متوقف — الاتصال مباشر'}</span></div>
+    ${n.proxied && P.status === 'starting' ? `<div class="fp-prog"><i style="width:${P.progress || 3}%"></i></div>` : ''}
+    <div class="fp-links"><button id="px-new" class="primary">لسان بروكسي جديد</button>${n.proxied && P.status === 'error' ? '<button id="px-retry">إعادة المحاولة</button>' : ''}<button id="px-set">الإعدادات</button></div>
+    <div class="fp-note">يفتح المواقع المحجوبة. ملفات الكوكيز وتسجيل الدخول في ألسن البروكسي منفصلة عن الألسن العادية.</div>`
+  p.querySelector('#px-tab').onclick = () => api.send('proxy:toggle')
+  p.querySelector('#px-new').onclick = () => { api.send('proxy:newtab'); closePanels() }
+  p.querySelector('#px-set').onclick = () => { api.send('menu:action', 'settings'); closePanels() }
+  const rt = p.querySelector('#px-retry'); if (rt) rt.onclick = () => api.send('proxy:retry')
+}
+function buildShieldPanel() {
+  const F = S.features || {}, n = S.nav || {}
+  const A = F.adblock || {}, Sh = F.shield || {}
+  const p = $('shieldpanel')
+  p.innerHTML = `<div class="fp-h"><span class="fic">${I.shield}</span><div><b>IBRA AdBlock</b><small>${n.host ? esc(n.host) : 'حاجب الإعلانات والمتتبعات'}</small></div></div>
+    <div class="fp-big"><div><b>${fmtN(n.ads)}</b><span>محجوبة في هذه الصفحة</span></div><div><b>${fmtN(A.total)}</b><span>المجموع منذ التثبيت</span></div></div>
+    <div class="fp-row"><div class="fl"><b>الحجب على هذا الموقع</b><small>${n.host ? esc(n.host) : '—'}</small></div>${sw('ad-site', !n.siteAllowed, !n.host || A.enabled === false)}</div>
+    <div class="fp-row"><div class="fl"><b>حاجب الإعلانات</b><small>لكل المواقع${A.ready === false ? ' — جاري تحميل القوائم…' : ''}</small></div>${sw('ad-all', A.enabled !== false)}</div>
+    <div class="fp-row"><div class="fl"><b>فاحص فيروسات المواقع</b><small>IBRA Shield — أوقف ${fmtN(Sh.blocked)} موقعاً خطيراً</small></div>${sw('sh-all', Sh.enabled !== false)}</div>
+    <div class="fp-links"><button id="ad-ext">إدارة الإضافات</button></div>`
+  p.querySelector('#ad-site').onclick = () => api.send('adblock:site', !n.siteAllowed)
+  p.querySelector('#ad-all').onclick = () => api.send('feature:set', 'adblockEnabled', A.enabled === false)
+  p.querySelector('#sh-all').onclick = () => api.send('feature:set', 'shieldEnabled', Sh.enabled === false)
+  p.querySelector('#ad-ext').onclick = () => { api.send('menu:action', 'extensions'); closePanels() }
+}
+$('proxybtn').onclick = () => { if (!$('proxypanel').hidden) return closePanels(); buildProxyPanel(); placePanel($('proxypanel'), 'proxybtn'); showPanel('proxypanel') }
+$('shieldbtn').onclick = () => { if (!$('shieldpanel').hidden) return closePanels(); buildShieldPanel(); placePanel($('shieldpanel'), 'shieldbtn'); showPanel('shieldpanel') }
 
 api.send('ui:ready')
 api.send('ui:height', frame.offsetHeight)

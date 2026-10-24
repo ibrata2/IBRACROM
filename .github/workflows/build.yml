@@ -20,6 +20,12 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Latest IBDM Pro extension (from ibrata2/ibdm-pro releases)
+        run: node scripts/update-builtin-ibdm.js
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Bundle Tor + ad-block engine + dangerous-sites database
+        run: node scripts/prepare-vendor.js --tor --require-tor
       - name: Read version
         id: ver
         shell: bash
@@ -38,7 +44,7 @@ jobs:
           name: IBRA CROM v${{ steps.ver.outputs.v }}
           make_latest: true
           body: |
-            IBRA CROM — متصفح مبني على Chromium مع دعم إضافات سوق Chrome و IBDM Pro مدمج.
+            IBRA CROM — متصفح مبني على Chromium مع دعم إضافات سوق Chrome، IBDM Pro مدمج، بروكسي لكل لسان (Tor)، حاجب إعلانات، وفاحص فيروسات المواقع.
             برمجة و تطوير ابراهيم الخزرجي
           files: |
             dist/*.exe

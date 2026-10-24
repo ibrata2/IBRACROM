@@ -41,11 +41,13 @@ async function render() {
   document.title = TITLES[r] || 'IBRA CROM'
   await fn()
 }
-const TITLES = { newtab: 'علامة تبويب جديدة', settings: 'الإعدادات', history: 'السجل', downloads: 'التنزيلات', bookmarks: 'الإشارات المرجعية', extensions: 'الإضافات', about: 'حول IBRA CROM', error: 'تعذر الوصول' }
+const TITLES = { newtab: 'علامة تبويب جديدة', settings: 'الإعدادات', history: 'السجل', downloads: 'التنزيلات', bookmarks: 'الإشارات المرجعية', extensions: 'الإضافات', about: 'حول IBRA CROM', error: 'تعذر الوصول', blocked: 'موقع خطير!', proxywait: 'جاري الاتصال بالبروكسي…' }
 window.addEventListener('hashchange', render)
 ibra.onChanged(async (what) => {
   if (what === 'settings') { await loadCfg(); if (route() === 'settings' || route() === 'newtab') render() }
   if (what === 'extensions' && route() === 'extensions') render()
+  if (what === 'features' && route() === 'extensions') render()
+  if ((what === 'features' || what === 'settings') && route() === 'settings') refreshProxyStatus()
   if (what === 'bookmarks' && (route() === 'bookmarks' || route() === 'newtab')) render()
 })
 
@@ -121,6 +123,8 @@ PAGES.settings = async () => {
         ${CFG.ibdm ? `<button class="btn" id="ibdmshow">فتح IBDM Pro</button>` : `<button class="btn" id="ibdmcheck">${I.refresh} إعادة الفحص</button><a class="btn" href="https://t.me/ibraprogram">تحميل IBDM Pro</a>`}</div>
       ${sw('ibdmCapture', 'تسليم التحميلات لـ IBDM Pro بدل المتصفح', 'زر IBDM في شريط الأدوات يعرض الفيديوهات الموجودة في الصفحة لتحميلها بالجودة التي تختارها')}
     </div>
+    <h2 id="proxy">البروكسي (IBRA Proxy)</h2>
+    <div class="card" id="pxcard"></div>
     <h2>المتصفح الافتراضي</h2>
     <div class="card">
       <div class="row"><div class="ric"><img src="../assets/logo64.png" alt=""></div><div class="rt"><b>اجعل IBRA CROM متصفحك الافتراضي</b><span>ستفتح إعدادات ويندوز، اختر IBRA CROM لروابط HTTP و HTTPS</span></div><button class="btn primary" id="defb">تعيين كافتراضي</button></div>
@@ -146,6 +150,8 @@ PAGES.settings = async () => {
   app.querySelector('#homepage').addEventListener('change', (e) => { ibra.setSettings({ homepage: e.target.value.trim() || 'ibra://newtab' }); toast('تم حفظ الصفحة الرئيسية') })
   app.querySelector('#dldir').addEventListener('click', async () => { await ibra.chooseDownloadsDir(); render() })
   app.querySelector('#defb').addEventListener('click', () => ibra.setDefaultBrowser())
+  await drawProxySettings()
+  if (location.hash.includes('proxy')) app.querySelector('#proxy')?.scrollIntoView()
   app.querySelector('#ibdmshow')?.addEventListener('click', async () => { if (!(await ibra.ibdmShow())) toast('تعذر الوصول إلى IBDM Pro') })
   app.querySelector('#ibdmcheck')?.addEventListener('click', async () => { const r = await ibra.ibdmCheck(); toast(r ? 'تم الاتصال بـ IBDM Pro' : 'IBDM Pro غير مشغّل'); render() })
   app.querySelector('#ud').addEventListener('click', () => ibra.openPath('userData'))
@@ -209,12 +215,12 @@ function drawDownloads() {
     const pct = d.total ? Math.round(100 * d.received / d.total) : 0
     let st = ''
     if (d.state === 'progressing') st = (d.paused ? 'متوقف مؤقتاً — ' : `${fmt(d.speed)}/ث — `) + `${fmt(d.received)} من ${d.total ? fmt(d.total) : '؟'}`
-    else if (d.state === 'completed') st = fmt(d.total || d.received)
+    else if (d.state === 'completed') st = fmt(d.total || d.received) + ({ scanning: ' · <span class="scan">جاري الفحص بـ Windows Defender…</span>', clean: ' · <span class="scan ok">✓ نظيف — فحصه Windows Defender</span>', threat: ' · <span class="scan bad">⚠ فيروس! لا تفتح هذا الملف</span>' }[d.scan] || '')
     else if (d.state === 'cancelled') st = 'أُلغي'
     else st = 'فشل'
     const links = d.state === 'progressing'
       ? `<a data-a="${d.paused ? 'resume' : 'pause'}">${d.paused ? 'استئناف' : 'إيقاف مؤقت'}</a><a data-a="cancel">إلغاء</a>`
-      : d.state === 'completed' ? `<a data-a="open">فتح</a><a data-a="folder">إظهار في المجلد</a><a data-a="copy">نسخ الرابط</a>`
+      : d.state === 'completed' ? (d.scan === 'threat' ? `<a data-a="trash" class="bad">حذف الملف</a><a data-a="folder">إظهار في المجلد</a><a data-a="rescan">إعادة الفحص</a>` : `<a data-a="open">فتح</a><a data-a="folder">إظهار في المجلد</a><a data-a="copy">نسخ الرابط</a>`)
       : `<a data-a="retry">إعادة المحاولة</a>`
     return `<div class="dl" data-id="${esc(d.id)}"><span class="dic">${d.state === 'completed' ? I.file : I.download}</span>
       <div class="dm"><div class="dn ${d.state === 'cancelled' ? 'gone' : ''}" dir="auto">${esc(d.filename)}</div><div class="du">${esc(d.url)}</div>
@@ -272,9 +278,42 @@ function editBookmark(b, done) {
 }
 
 // ═════════ الإضافات ═════════
+const fmtN = (n) => (n || 0).toLocaleString('en-US')
+const when = (t) => t ? new Date(t).toLocaleString('ar-IQ', { dateStyle: 'medium', timeStyle: 'short' }) : 'لم تُحمّل بعد'
+function builtinCards(F) {
+  const P = F.proxy, A = F.adblock, Sh = F.shield
+  const swb = (k, on) => `<label class="switch"><input type="checkbox" data-f="${k}" ${on ? 'checked' : ''}><i></i></label>`
+  const pst = P.status === 'ready' ? 'متصل — ' + esc(P.message) : P.status === 'starting' ? esc(P.message) : P.status === 'error' ? '⚠ ' + esc(P.message) : 'جاهز — شغّله من زر البروكسي على أي لسان'
+  return `<h2>إضافات IBRA المدمجة</h2>
+  <div class="bexts">
+    <div class="card bext ${P.enabled ? '' : 'dim'}"><div class="bh"><span class="bic">${I.proxy}</span><div class="bt"><b>IBRA Proxy</b><small>بروكسي يعمل على لسان واحد فقط لفتح المواقع المحجوبة</small></div>${swb('proxyEnabled', P.enabled)}</div>
+      <div class="bl"><span>الطريقة</span><b>${P.mode === 'custom' ? 'بروكسي خاص ' + esc(P.custom.host ? P.custom.scheme.toUpperCase() + ' ' + P.custom.host + ':' + P.custom.port : '(غير مضبوط)') : 'شبكة Tor المدمجة' + (P.torAvailable ? '' : ' (غير موجودة في هذه النسخة)')}</b></div>
+      <div class="bl"><span>الحالة</span><b>${pst}</b></div>
+      <div class="bf"><button class="btn" data-go="settings#proxy">إعدادات البروكسي</button></div></div>
+
+    <div class="card bext ${A.enabled ? '' : 'dim'}"><div class="bh"><span class="bic">${I.ad}</span><div class="bt"><b>IBRA AdBlock</b><small>يحجب الإعلانات والمتتبعات والنوافذ المزعجة في كل المواقع</small></div>${swb('adblockEnabled', A.enabled)}</div>
+      <div class="bnum"><b>${fmtN(A.total)}</b><span>إعلان ومتتبع محجوب منذ التثبيت</span></div>
+      <div class="bl"><span>القوائم</span><b>${A.ready ? fmtN(A.filters) + ' قاعدة · ' + when(A.updatedAt) : (A.refreshing ? 'جاري التحميل…' : 'لم تُحمّل بعد')}</b></div>
+      ${A.allow.length ? `<div class="bl col"><span>مواقع أوقفت الحجب عليها</span><div class="chips">${A.allow.map(h => `<span class="chipx" dir="ltr">${esc(h)}<button data-unallow="${esc(h)}" title="إعادة الحجب">×</button></span>`).join('')}</div></div>` : ''}
+      <div class="bf"><button class="btn" id="ad-up">${I.refresh} تحديث القوائم</button></div></div>
+
+    <div class="card bext ${Sh.enabled ? '' : 'dim'}"><div class="bh"><span class="bic">${I.bug}</span><div class="bt"><b>IBRA Shield</b><small>فاحص فيروسات المواقع: يحذّرك من مواقع البرمجيات الخبيثة والتصيد والاحتيال</small></div>${swb('shieldEnabled', Sh.enabled)}</div>
+      <div class="bnum"><b>${fmtN(Sh.stats.blocked)}</b><span>موقع خطير تم إيقافه</span></div>
+      <div class="bl"><span>قاعدة البيانات</span><b>${fmtN(Sh.total)} موقع خطير معروف</b></div>
+      <div class="bl"><span>فحص التنزيلات</span><b>${Sh.defender ? 'Windows Defender — فُحص ' + fmtN(Sh.stats.scanned) + ' ملف، وُجد ' + fmtN(Sh.stats.threats) + ' تهديد' : 'Windows Defender غير متوفر على هذا الجهاز'}</b>${swb('shieldScanDownloads', Sh.scanDownloads)}</div>
+      <div class="bl col"><span>المصادر</span><div class="srcs">${Sh.lists.map(l => `<div><i class="${l.count ? 'ok' : ''}"></i>${esc(l.name)} <small>${l.count ? fmtN(l.count) + ' · ' + when(l.updatedAt) : 'لم يُحمّل بعد'}</small></div>`).join('')}</div></div>
+      <div class="bf"><button class="btn" id="sh-up">${I.refresh} تحديث قاعدة البيانات</button></div></div>
+
+    <div class="card bext"><div class="bh"><span class="bic">${I.download}</span><div class="bt"><b>IBDM Pro</b><small>تسليم التحميلات لبرنامج IBDM Pro + التقاط الفيديوهات. تتحدث تلقائياً، ونسخة واحدة فقط تعمل.</small></div></div>
+      <div class="bl"><span>الإضافة</span><b>الإصدار ${esc(F.ibdm.version)} — ${({ installed: 'من برنامج IBDM Pro المثبت على جهازك', github: 'محدّثة تلقائياً من صفحة إصدارات IBDM Pro', builtin: 'النسخة المدمجة' })[F.ibdm.source] || ''}</b></div>
+      <div class="bl"><span>البرنامج</span><b>${F.ibdm.app ? 'IBDM Pro ' + esc(F.ibdm.app) + ' متصل' : 'غير مشغّل'}</b></div></div>
+  </div>
+  <h2>إضافات سوق Chrome</h2>`
+}
+
 PAGES.extensions = async () => {
-  const list = await ibra.extensions()
-  app.innerHTML = shell('extensions', `<h1>الإضافات</h1>
+  const [list, F] = await Promise.all([ibra.extensions(), ibra.features()])
+  app.innerHTML = shell('extensions', `<h1>الإضافات</h1>${builtinCards(F)}
     <div class="card hero-store"><span class="hs-ic">${I.store}</span><div class="hs-t"><b>سوق Chrome الإلكتروني</b><span>ثبّت إضافات جوجل الأصلية مباشرة بزر «إضافة إلى Chrome» كما في كروم تماماً.</span></div><button class="btn primary" id="store">فتح السوق</button></div>
     <div class="toolbar"><button class="btn" id="unp">${I.folder} تحميل إضافة غير مضغوطة</button><button class="btn" id="upd">${I.refresh} تحديث الإضافات</button></div>
     ${list.length ? `<div class="exts">${list.map(x => `<div class="card ext" data-id="${esc(x.id)}">
@@ -284,6 +323,11 @@ PAGES.extensions = async () => {
       <div class="ev" dir="ltr" style="text-align:right">ID: ${esc(x.id)}</div></div>`).join('')}</div>`
     : `<div class="card"><div class="empty">${I.puzzle}<br>لم تثبّت أي إضافة بعد. افتح سوق Chrome واختر ما تريد.</div></div>`}`)
   app.querySelector('#store').addEventListener('click', () => ibra.openStore())
+  app.querySelectorAll('input[data-f]').forEach(c => c.addEventListener('change', async () => { await ibra.setFeature(c.dataset.f, c.checked); render() }))
+  app.querySelectorAll('[data-go]').forEach(b => b.addEventListener('click', () => { location.hash = b.dataset.go }))
+  app.querySelectorAll('[data-unallow]').forEach(b => b.addEventListener('click', async () => { await ibra.adblockAllowRemove(b.dataset.unallow); render() }))
+  app.querySelector('#ad-up').addEventListener('click', async (e) => { e.target.disabled = true; toast('جاري تحميل أحدث قوائم الإعلانات…'); const ok = await ibra.adblockRefresh(); toast(ok ? 'تم تحديث قوائم حاجب الإعلانات' : 'تعذر التحديث — تحقق من الإنترنت'); render() })
+  app.querySelector('#sh-up').addEventListener('click', async (e) => { e.target.disabled = true; toast('جاري تحديث قاعدة بيانات المواقع الخطيرة…'); await ibra.shieldRefresh(); toast('تم التحديث'); render() })
   app.querySelector('#unp').addEventListener('click', async () => { const r = await ibra.loadUnpacked(); if (r.ok) { toast('تم تحميل ' + r.name); render() } else if (r.error) toast('خطأ: ' + r.error) })
   app.querySelector('#upd').addEventListener('click', async () => { toast('جاري البحث عن تحديثات...'); const ok = await ibra.updateExtensions(); toast(ok ? 'الإضافات محدثة' : 'تعذر التحديث الآن'); render() })
   app.querySelectorAll('.ext').forEach(c => {
@@ -291,6 +335,89 @@ PAGES.extensions = async () => {
     c.querySelector('[data-r]')?.addEventListener('click', async () => { if (confirm('إزالة هذه الإضافة؟')) { await ibra.removeExtension(id); render() } })
     c.querySelector('[data-o]')?.addEventListener('click', () => ibra.openExtensionOptions(id))
   })
+}
+
+// ═════════ إعدادات البروكسي ═════════
+async function drawProxySettings() {
+  const box = app.querySelector('#pxcard'); if (!box) return
+  const { proxy: P } = await ibra.features()
+  const c = P.custom
+  box.innerHTML = `
+    <label class="check-row"><input type="radio" name="pxmode" value="tor" ${P.mode === 'tor' ? 'checked' : ''}><div><b>شبكة Tor المدمجة</b> <small class="mut">— مجاني، يفتح كل المواقع المحجوبة${P.torAvailable ? '' : ' (غير موجود في هذه النسخة)'}</small></div></label>
+    <div class="row sub" data-for="tor"><div class="rt"><b>طريقة الاتصال بـ Tor</b><span>إذا كان Tor محجوباً عندك اختر Snowflake أو obfs4، أو «تلقائي» ليجرّبها بالترتيب</span></div>
+      <select id="pxtr">${[['auto', 'تلقائي (مستحسن)'], ['direct', 'مباشر'], ['snowflake', 'Snowflake'], ['obfs4', 'obfs4'], ['meek', 'meek (Azure)'], ['custom', 'جسور مخصصة']].map(([k, t]) => `<option value="${k}" ${P.torTransport === k ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
+    <div class="row sub" data-for="bridges"><div class="rt"><b>جسور مخصصة</b><span>الصق الجسور من bridges.torproject.org — كل جسر بسطر</span><textarea id="pxbr" dir="ltr" rows="3" placeholder="obfs4 1.2.3.4:443 FINGERPRINT cert=... iat-mode=0">${esc(P.bridges)}</textarea></div></div>
+    <label class="check-row"><input type="radio" name="pxmode" value="custom" ${P.mode === 'custom' ? 'checked' : ''}><div><b>بروكسي خاص</b> <small class="mut">— HTTP أو HTTPS أو SOCKS5 أو SOCKS4</small></div></label>
+    <div class="row sub" data-for="custom"><div class="pxgrid">
+      <select id="pxs">${['socks5', 'http', 'https', 'socks4'].map(k => `<option value="${k}" ${c.scheme === k ? 'selected' : ''}>${k.toUpperCase()}</option>`).join('')}</select>
+      <input type="text" id="pxh" dir="ltr" placeholder="العنوان مثل 1.2.3.4" value="${esc(c.host)}">
+      <input type="text" id="pxp" dir="ltr" placeholder="المنفذ" value="${esc(c.port)}" style="min-width:0">
+      <input type="text" id="pxu" dir="ltr" placeholder="اسم المستخدم (اختياري)" value="${esc(c.user)}">
+      <input type="password" id="pxw" dir="ltr" placeholder="${c.hasPass ? '•••••••• (محفوظة)' : 'كلمة السر (اختياري)'}" style="height:36px;border-radius:10px;border:1px solid var(--line-strong);background:var(--field-bg-focus);color:var(--text);padding:0 12px;font:inherit">
+    </div></div>
+    <div class="row"><div class="rt"><b>الحالة</b><span id="pxst">—</span></div><button class="btn" id="pxretry">${I.refresh} إعادة الاتصال</button><button class="btn primary" id="pxsave">حفظ</button></div>`
+  const sync = () => {
+    const mode = box.querySelector('input[name=pxmode]:checked')?.value
+    box.querySelectorAll('[data-for]').forEach(r => { const f = r.dataset.for; r.hidden = !(f === mode || (f === 'tor' && mode === 'tor') || (f === 'bridges' && mode === 'tor' && box.querySelector('#pxtr').value === 'custom')) })
+  }
+  box.querySelectorAll('input[name=pxmode]').forEach(r => r.addEventListener('change', sync))
+  box.querySelector('#pxtr').addEventListener('change', sync)
+  sync()
+  box.querySelector('#pxsave').addEventListener('click', async () => {
+    const mode = box.querySelector('input[name=pxmode]:checked')?.value
+    const pass = box.querySelector('#pxw').value
+    await ibra.setProxySettings({ mode, transport: box.querySelector('#pxtr').value, bridges: box.querySelector('#pxbr').value,
+      custom: { scheme: box.querySelector('#pxs').value, host: box.querySelector('#pxh').value, port: box.querySelector('#pxp').value, user: box.querySelector('#pxu').value, pass } })
+    toast('تم حفظ إعدادات البروكسي')
+    drawProxySettings()
+  })
+  box.querySelector('#pxretry').addEventListener('click', async () => { await ibra.proxyRetry(); refreshProxyStatus() })
+  refreshProxyStatus()
+}
+async function refreshProxyStatus() {
+  const el = app.querySelector('#pxst'); if (!el) return
+  const { proxy: P } = await ibra.features()
+  el.textContent = P.status === 'off' ? 'متوقف — يعمل عند تشغيله على لسان' : (P.message || P.status)
+}
+
+// ═════════ موقع خطير ═════════
+PAGES.blocked = async () => {
+  const [, kind, url] = location.hash.slice(1).split('|').map(x => decodeURIComponent(x || ''))
+  let host = url; try { host = new URL(url).hostname } catch {}
+  const T = {
+    malware: ['الموقع التالي يحتوي على برمجيات خبيثة', 'هذا الموقع معروف بنشر الفيروسات وبرامج التجسس. قد يحاول تثبيت برامج تسرق معلوماتك أو تتلف جهازك.'],
+    phishing: ['موقع تصيّد احتيالي!', 'هذا الموقع ينتحل صفة موقع موثوق ليسرق كلمات السر أو معلومات البطاقة المصرفية. لا تُدخل أي معلومات فيه.'],
+    scam: ['موقع احتيال', 'هذا الموقع مُبلّغ عنه بأنه يمارس الاحتيال (جوائز وهمية، متاجر مزيفة، دعم فني مزيف).'],
+  }[kind] || ['موقع خطير', 'هذا الموقع مدرج في قوائم المواقع الضارة.']
+  document.body.classList.add('danger-page')
+  app.innerHTML = `<div class="err danger"><div class="eic">${I.bug}</div>
+    <h1>${T[0]}</h1>
+    <p><b dir="ltr">${esc(host)}</b></p>
+    <p>${T[1]}</p>
+    <p class="sm">أوقفه <b>IBRA Shield</b> — فاحص فيروسات المواقع في IBRA CROM</p>
+    <div style="margin-top:22px;display:flex;gap:10px;flex-wrap:wrap"><button class="btn primary" id="safe">العودة إلى الأمان</button><button class="btn" id="go">المتابعة رغم الخطر</button></div></div>`
+  app.querySelector('#safe').addEventListener('click', () => { if (history.length > 2) history.go(-2); else ibra.navigate('ibra://newtab') })
+  app.querySelector('#go').addEventListener('click', () => { if (confirm('هل أنت متأكد؟ هذا الموقع قد يضر جهازك أو يسرق معلوماتك.')) ibra.shieldProceed(url) })
+}
+
+// ═════════ انتظار البروكسي ═════════
+let waitTimer = null
+PAGES.proxywait = async () => {
+  app.innerHTML = `<div class="err"><div class="eic">${I.proxy}</div><h1>جاري تجهيز البروكسي…</h1><p id="pwm">—</p>
+    <div class="pwbar"><i id="pwb"></i></div>
+    <p class="sm">يتم الاتصال لأول مرة فقط، بعدها تفتح ألسن البروكسي مباشرة. باقي الألسن تعمل بشكل طبيعي.</p>
+    <div style="margin-top:22px;display:flex;gap:10px"><button class="btn" id="retry">${I.refresh} إعادة المحاولة</button><button class="btn" id="cancel">فتح الموقع بدون بروكسي</button><button class="btn" id="set">${I.settings} إعدادات البروكسي</button></div></div>`
+  app.querySelector('#retry').addEventListener('click', () => ibra.proxyRetry())
+  app.querySelector('#cancel').addEventListener('click', () => ibra.proxyCancelTab())
+  app.querySelector('#set').addEventListener('click', () => ibra.openTab('ibra://settings#proxy'))
+  const tick = async () => {
+    if (route() !== 'proxywait') return
+    const { proxy: P } = await ibra.features()
+    const m = app.querySelector('#pwm'); if (m) m.textContent = P.message || 'جاري الاتصال…'
+    const b = app.querySelector('#pwb'); if (b) { b.style.width = (P.status === 'ready' ? 100 : Math.max(4, P.progress || 0)) + '%'; b.classList.toggle('err', P.status === 'error') }
+    clearTimeout(waitTimer); waitTimer = setTimeout(tick, 600)
+  }
+  tick()
 }
 
 // ═════════ حول ═════════

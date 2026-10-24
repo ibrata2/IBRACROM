@@ -49,6 +49,12 @@ window.ICONS = (() => {
     muted: s('<path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M17 9l5 6M22 9l-5 6"/>'),
     edit: s('<path d="M4 20h4L19 9l-4-4L4 16z"/>'),
     upload: s('<path d="M12 20V9"/><path d="M7 13l5-5 5 5"/><path d="M5 4h14"/>'),
+    proxy: s('<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18"/><path d="M17 17l4 4"/>'),
+    shield: s('<path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z"/>'),
+    shieldOff: s('<path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z"/><path d="M4 4l16 16"/>'),
+    shieldCheck: s('<path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/>'),
+    bug: s('<rect x="8" y="7" width="8" height="12" rx="4"/><path d="M12 7V5M9 4l1.5 2M15 4l-1.5 2M4 11h4M16 11h4M4 17l4-2M20 17l-4-2"/>'),
+    ad: s('<rect x="3" y="5" width="18" height="14" rx="3"/><path d="M7 15l2.5-6 2.5 6M7.8 13h3.4"/><path d="M14.5 9v6h1.5a3 3 0 0 0 0-6z"/>'),
     refresh: s('<path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/>'),
   }
 })()

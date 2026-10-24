@@ -1,7 +1,7 @@
 {
   "name": "ibra-crom",
   "productName": "IBRA CROM",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "IBRA CROM — متصفح مبني على محرك Chromium مع دعم إضافات سوق Chrome. برمجة و تطوير ابراهيم الخزرجي",
   "main": "src/main.js",
   "author": {
@@ -11,15 +11,20 @@
   "homepage": "https://t.me/ibraprogram",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --win nsis --x64"
+    "vendor": "node scripts/prepare-vendor.js",
+    "vendor:all": "node scripts/update-builtin-ibdm.js && node scripts/prepare-vendor.js --tor",
+    "dist": "electron-builder --win nsis --x64 --publish never"
   },
   "dependencies": {
+    "@ghostery/adblocker-electron": "^2.20.1",
+    "adm-zip": "^0.5.16",
     "electron-chrome-extensions": "4.9.0",
     "electron-chrome-web-store": "0.13.0"
   },
   "devDependencies": {
     "electron": "^38.0.0",
-    "electron-builder": "^26.0.0"
+    "electron-builder": "^26.0.0",
+    "undici": "^6.29.1"
   },
   "build": {
     "appId": "com.ibrahim.ibracrom",
@@ -31,7 +36,7 @@
     },
     "files": [
       "src/**/*",
-      "!src/test-shot.js",
+      "!src/test-shot*.js",
       "package.json"
     ],
     "asar": true,
@@ -101,7 +106,18 @@
     },
     "publish": null,
     "asarUnpack": [
-      "src/builtin/**"
+      "src/builtin/**",
+      "src/features/shield-worker.js",
+      "src/features/shield-parse.js"
+    ],
+    "extraResources": [
+      {
+        "from": "vendor",
+        "to": "vendor",
+        "filter": [
+          "**/*"
+        ]
+      }
     ]
   },
   "repository": {

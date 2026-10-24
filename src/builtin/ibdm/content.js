@@ -184,6 +184,32 @@
     hideTimer = setTimeout(hide, 2500);
   }
 
+  // In a feed (Instagram home, Facebook, X, TikTok…) the page address is the feed, not the video: find the link of
+  // the post the video sits in by looking for a post link in the boxes around the video, from the closest outwards.
+  const POST_LINK = [
+    /instagram\.com\/(?:[\w.]+\/)?(?:p|reel|reels|tv)\/[\w-]+/i,
+    /facebook\.com\/(?:.*\/videos\/\d+|reel\/\d+|watch\/?\?v=\d+|share\/[rv]\/\w+)/i,
+    /(?:twitter|x)\.com\/\w+\/status\/\d+/i,
+    /tiktok\.com\/@[\w.-]+\/video\/\d+/i,
+    /youtube\.com\/(?:watch\?v=|shorts\/)[\w-]+/i,
+    /(?:vimeo\.com\/\d+|dailymotion\.com\/video\/\w+|reddit\.com\/r\/\w+\/comments\/\w+|pinterest\.[\w.]+\/pin\/\d+|threads\.(?:net|com)\/@[\w.]+\/post\/[\w-]+)/i,
+  ];
+  const isPost = u => POST_LINK.some(r => r.test(u));
+  function postUrlFor(v) {
+    if (isPost(location.href)) return location.href; // already on the post's own page
+    let el = v;
+    for (let depth = 0; el && el !== document.body && depth < 25; depth++, el = el.parentElement) {
+      const links = el.querySelectorAll ? el.querySelectorAll('a[href]') : [];
+      for (const a of links) {
+        const href = a.href || '';
+        if (!isPost(href)) continue;
+        // Instagram/Facebook comment links (…/c/123) and "liked by" lists are not the post.
+        return href.replace(/\/(?:c|liked_by|comments?)\/.*$/i, '/').split('#')[0];
+      }
+    }
+    return '';
+  }
+
   function download() {
     const v = current;
     if (!v) return;
@@ -191,9 +217,12 @@
     if (!src) { const s = v.querySelector('source[src]'); if (s) src = s.src; }
     // blob:/MediaSource players (YouTube and most big sites): the page address is what can be downloaded.
     if (!/^https?:/i.test(src)) src = '';
+    const post = postUrlFor(v);
+    // A direct file link only counts on the post's own page; in a feed send the post (yt-dlp finds every quality).
+    if (post && post !== location.href) src = '';
     sending = true;
     label.textContent = t('جاري الإرسال…');
-    api.runtime.sendMessage({ cmd: 'media', src, pageUrl: location.href, title: document.title }).then(res => {
+    api.runtime.sendMessage({ cmd: 'media', src, pageUrl: post || location.href, title: document.title }).then(res => {
       label.textContent = res && res.ok ? t('✓ تم — اختر الجودة بالبرنامج') : t('شغّل برنامج IBDM Pro أولاً');
       setTimeout(() => { sending = false; if (label) label.textContent = t('تحميل هذا الفيديو'); }, 3500);
     }).catch(() => { label.textContent = t('أعد تحميل الصفحة'); });

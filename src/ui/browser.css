@@ -235,3 +235,51 @@ body.overlay-on #overlay { display: block; }
 /* ═════════ تنبيه سريع ═════════ */
 #toast { position: absolute; top: 80px; left: 50%; transform: translateX(-50%); z-index: 60; max-width: 70vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   background: #1c1c21; color: #fff; padding: 5px 14px; border-radius: 12px; box-shadow: var(--shadow); font-size: 12.5px; border: 1px solid rgba(229,20,30,.5); animation: pop .18s var(--ease); }
+
+/* ═════════ البروكسي وحاجب الإعلانات ═════════ */
+#proxybtn.on { color: #fff; background: linear-gradient(180deg, #f0262f, #b40d14); box-shadow: 0 2px 8px rgba(229,20,30,.4); }
+#proxybtn.on:hover { filter: brightness(1.08); background: linear-gradient(180deg, #f0262f, #b40d14); }
+#proxybtn .pdot { position: absolute; bottom: 4px; left: 5px; width: 8px; height: 8px; border-radius: 50%; background: #f59e0b; border: 2px solid var(--toolbar-solid); }
+#proxybtn .pdot.ready { background: #22c55e; }
+#proxybtn .pdot.error { background: #ef4444; }
+#shieldbtn.on { color: var(--red); }
+#shieldbtn.off { opacity: .55; }
+#shieldbtn .badge, #closedbtn .cnt { pointer-events: none; }
+#shieldbtn .badge { position: absolute; top: 1px; left: 0; min-width: 16px; height: 15px; padding: 0 4px; border-radius: 8px; background: var(--red); color: #fff; font-size: 9.5px; line-height: 15px; font-weight: 700; text-align: center; font-variant-numeric: tabular-nums; }
+.tab .pxy { width: 15px; height: 15px; flex: none; border-radius: 50%; display: grid; place-items: center; background: var(--red); color: #fff; }
+.tab .pxy svg { width: 11px; height: 11px; }
+.tab.proxied .stripe { background: linear-gradient(90deg, #f59e0b, var(--red), #f59e0b); }
+.chip.proxy { color: #fff; background: var(--red); font-weight: 600; }
+.chip.proxy:hover { background: var(--red-deep); }
+.chip.danger { color: #fff; background: #b91c1c; font-weight: 600; }
+
+.fpanel { width: 330px; padding: 14px; }
+.fp-h { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.fp-h .fic { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; background: linear-gradient(135deg, #f0262f, #8e0a10); color: #fff; flex: none; }
+.fp-h b { display: block; font-size: 14px; }
+.fp-h small { color: var(--muted); font-size: 11.5px; }
+.fp-row { display: flex; align-items: center; gap: 10px; padding: 9px 2px; border-top: 1px solid var(--line); }
+.fp-row .fl { flex: 1; min-width: 0; }
+.fp-row .fl b { font-weight: 500; display: block; }
+.fp-row .fl small { color: var(--muted); font-size: 11.5px; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sw { position: relative; width: 38px; height: 22px; flex: none; border: 0; border-radius: 11px; background: var(--line-strong); padding: 0; transition: background .15s; }
+.sw::after { content: ''; position: absolute; top: 3px; right: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.3); transition: right .18s var(--ease); }
+.sw.on { background: var(--red); }
+.sw.on::after { right: 19px; }
+.sw:disabled { opacity: .4; }
+.fp-big { display: flex; gap: 10px; margin-bottom: 4px; }
+.fp-big div { flex: 1; text-align: center; padding: 10px 6px; border-radius: 12px; background: var(--hover); }
+.fp-big b { display: block; font-size: 24px; color: var(--red); font-variant-numeric: tabular-nums; line-height: 1.2; }
+.fp-big span { font-size: 11.5px; color: var(--muted); }
+.fp-status { display: flex; align-items: center; gap: 8px; font-size: 12.5px; padding: 8px 10px; border-radius: 10px; background: var(--hover); margin: 4px 0 8px; }
+.fp-status i { width: 9px; height: 9px; border-radius: 50%; background: #f59e0b; flex: none; }
+.fp-status.ready i { background: #22c55e; }
+.fp-status.error i { background: #ef4444; }
+.fp-status.off i { background: var(--line-strong); }
+.fp-prog { height: 4px; border-radius: 4px; background: var(--line); overflow: hidden; margin: -2px 0 8px; }
+.fp-prog i { display: block; height: 100%; background: linear-gradient(90deg, var(--red-deep), var(--red)); transition: width .3s; }
+.fp-links { display: flex; gap: 8px; margin-top: 10px; }
+.fp-links button { flex: 1; height: 32px; border-radius: 10px; border: 1px solid var(--line-strong); background: none; font-size: 12px; color: var(--text); }
+.fp-links button:hover { background: var(--hover); }
+.fp-links button.primary { background: var(--red); border-color: transparent; color: #fff; }
+.fp-note { color: var(--muted); font-size: 11.5px; margin-top: 8px; line-height: 1.5; }

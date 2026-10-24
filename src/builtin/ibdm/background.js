@@ -44,7 +44,6 @@ function newer(a, b) {
   return false;
 }
 async function selfUpdate(appVersion) {
-  if (!api.downloads) return; // IBRA CROM ships this copy built in; it is updated with the browser
   const mine = api.runtime.getManifest().version;
   if (!newer(appVersion, mine)) return;
   // At most 3 tries per app version (right away, after 1 minute, after 10 minutes) — never a reload loop,
@@ -124,8 +123,11 @@ async function shouldCapture(item) {
   if (letThrough.has(url)) { letThrough.delete(url); return null; }
   const { paused } = await api.storage.local.get({ paused: false });
   if (paused) return null;
-  const cfg = await ping();
+  const cfg = await ping(true);
   if (!cfg || !cfg.capture) return null;
+  // The user chose "download with the browser" for this link in the app.
+  const only = cfg.browserOnly || [];
+  if (only.includes(url) || only.includes(item.url) || (item.finalUrl && only.includes(item.finalUrl))) return null;
   const name = baseName(item.filename) || nameFromUrl(url);
   const ext = extOf(name) || extOf(url) || MIME_EXT[(item.mime || '').toLowerCase()] || '';
   if (!ext || !(cfg.extensions || []).includes(ext)) return null;

@@ -11,8 +11,13 @@ const fs = require('fs')
 const os = require('os')
 const { pathToFileURL, fileURLToPath } = require('url')
 const store = require('./store')
+const createAdblock = require('./features/adblock')
+const createShield = require('./features/shield')
+const createProxy = require('./features/proxy')
+const { resolveIbdm, checkGithub, isIbdmExtension, newer: verNewer } = require('./features/ibdm-ext')
 
 app.setName('IBRA CROM')
+if (process.env.IBRA_TEST_RESOLVE) app.commandLine.appendSwitch('host-resolver-rules', process.env.IBRA_TEST_RESOLVE)
 if (process.platform === 'win32') app.setAppUserModelId('com.ibrahim.ibracrom')
 
 // ── واجهة كروم حقيقية حتى لا تُحظر المواقع ومتجر الإضافات ──
@@ -30,7 +35,8 @@ const PAGES_HTML = path.join(__dirname, 'pages', 'internal.html')
 const PAGES_URL = pathToFileURL(PAGES_HTML).href
 const PRELOAD_UI = path.join(__dirname, 'preload-ui.js')
 const PRELOAD_PAGE = path.join(__dirname, 'preload-page.js')
-const INTERNAL_PAGES = ['newtab', 'settings', 'history', 'bookmarks', 'downloads', 'extensions', 'about', 'error']
+const INTERNAL_PAGES = ['newtab', 'settings', 'history', 'bookmarks', 'downloads', 'extensions', 'about', 'error', 'blocked', 'proxywait']
+const VENDOR_DIR = app.isPackaged ? path.join(process.resourcesPath, 'vendor') : path.join(__dirname, '..', 'vendor')
 
 // ── البيانات ──
 const DEFAULT_SETTINGS = {
@@ -44,6 +50,11 @@ const DEFAULT_SETTINGS = {
   askWhereToSave: false,
   restoreZoom: true,
   ibdmCapture: true, // تسليم التحميلات لبرنامج IBDM Pro عندما يكون مشغّلاً
+  // ── الإضافات المدمجة ──
+  adblockEnabled: true, adblockAllow: [],
+  shieldEnabled: true, shieldScanDownloads: true,
+  proxyEnabled: true, proxyMode: 'tor', torTransport: 'auto', torBridges: '',
+  proxyCustom: { scheme: 'socks5', host: '', port: '', user: '', pass: '' },
 }
 let settings = Object.assign({}, DEFAULT_SETTINGS, store.load('settings', {}))
 let bookmarks = store.load('bookmarks', [])
@@ -70,6 +81,11 @@ const THEME_COLORS = {
 
 let ses = null
 let extensions = null
+let extProxy = null
+let adblock = null, shield = null, proxy = null
+let ibdmExt = { dir: '', version: '0', source: 'builtin' }
+const shieldPending = new Map() // webContentsId -> { url, kind }
+const extFor = (proxied) => (proxied && extProxy) || extensions
 const windows = new Set()
 const closedTabs = []
 let tabSeq = 1
@@ -87,7 +103,8 @@ function internalName(url) {
 function displayUrl(tab) {
   const url = tab.wc.getURL()
   const name = internalName(url)
-  if (name === 'error') return tab.errorUrl || ''
+  if (name === 'error' || name === 'blocked') return tab.errorUrl || ''
+  if (name === 'proxywait') return tab.pendingUrl || ''
   if (name === 'newtab') return ''
   if (name) return 'ibra://' + name
   return url
@@ -157,7 +174,7 @@ class IbraWindow {
       if (windows.size === 1) saveSession()
     })
     this.win.on('closed', () => {
-      for (const tab of this.tabs) { try { tab.closing = true; extensions.removeTab(tab.wc) } catch {} try { tab.wc.close() } catch {} }
+      for (const tab of this.tabs) { try { tab.closing = true; extFor(tab.proxied).removeTab(tab.wc) } catch {} try { tab.wc.close() } catch {} }
       windows.delete(this)
     })
 
@@ -179,24 +196,51 @@ class IbraWindow {
   byWc(wc) { return this.tabs.find(t => t.wc === wc) }
 
   newTab(url, activate = true, opts = {}) {
+    const proxied = !!opts.proxied && settings.proxyEnabled !== false && !!proxy
     const view = new WebContentsView({
       webPreferences: {
-        session: ses, preload: PRELOAD_PAGE, sandbox: true, contextIsolation: true,
+        session: proxied ? proxy.session : ses, preload: PRELOAD_PAGE, sandbox: true, contextIsolation: true,
         nodeIntegration: false, plugins: true, spellcheck: true, scrollBounce: true,
       },
     })
     const wc = view.webContents
-    const tab = { id: tabSeq++, view, wc, title: 'جديد', favicon: '', loading: false, errorUrl: '', audible: false, muted: false }
+    const tab = { id: tabSeq++, view, wc, title: 'جديد', favicon: '', loading: false, errorUrl: '', audible: false, muted: false, proxied, pendingUrl: '' }
     const at = opts.index ?? (opts.afterActive ? this.tabs.indexOf(this.active()) + 1 : this.tabs.length)
     this.tabs.splice(Math.max(0, Math.min(at, this.tabs.length)), 0, tab)
     this.wireTab(tab)
-    if (!opts.skipExtensions) extensions.addTab(wc, this.win)
-    const target = toLoadable(url)
+    if (!opts.skipExtensions) extFor(proxied).addTab(wc, this.win)
+    let target = toLoadable(url)
+    if (proxied && !target.startsWith(PAGES_URL)) target = this.proxyGate(tab, target)
     this.applyBg(tab, target)
     wc.loadURL(target).catch(() => {})
     if (activate || !this.activeId) this.activate(tab.id)
     else this.sendState()
     return tab
+  }
+
+  // لسان البروكسي ينتظر حتى يجهز الاتصال (Tor) ثم يفتح الموقع
+  proxyGate(tab, target) {
+    proxy.ensure()
+    if (proxy.info().status === 'ready') return target
+    tab.pendingUrl = target
+    proxy.whenReady(() => {
+      if (tab.closing || !tab.pendingUrl || internalName(tab.wc.getURL()) !== 'proxywait') return
+      const u = tab.pendingUrl; tab.pendingUrl = ''
+      tab.wc.loadURL(u).catch(() => {})
+    })
+    return PAGES_URL + '#proxywait'
+  }
+
+  // تشغيل/إيقاف البروكسي للسان واحد فقط: نعيد فتحه في الجلسة الأخرى بنفس العنوان ونفس المكان
+  setTabProxy(id, on) {
+    const t = this.tabs.find(x => x.id === id)
+    if (!t || !!t.proxied === !!on) return
+    if (on && settings.proxyEnabled === false) return
+    const n = internalName(t.wc.getURL())
+    const url = n === 'proxywait' ? t.pendingUrl : (n === 'error' || n === 'blocked') ? t.errorUrl : t.wc.getURL()
+    const wasActive = this.activeId === id
+    this.newTab(url || 'ibra://newtab', wasActive, { index: this.tabs.indexOf(t), proxied: on })
+    this.closeTab(id, { silent: true })
   }
 
   applyBg(tab, url) {
@@ -221,11 +265,14 @@ class IbraWindow {
       if (e.isMainFrame && !e.isSameDocument) {
         this.applyBg(tab, e.url)
         if (!internalName(e.url)) tab.favicon = ''
+        if (internalName(e.url) !== 'proxywait') tab.pendingUrl = ''
+        adblock?.resetTab(wc.id)
+        tabMedia.delete(wc.id)
       }
     })
     wc.on('did-navigate', (e, url) => {
       const n = internalName(url)
-      if (n !== 'error') tab.errorUrl = ''
+      if (n !== 'error' && n !== 'blocked') tab.errorUrl = ''
       if (!n) addHistory(url, wc.getTitle())
       else tab.favicon = ''
       if (n && n !== 'error') tab.title = pageTitle(n)
@@ -235,6 +282,14 @@ class IbraWindow {
     wc.on('did-fail-load', (e, code, desc, url, isMain) => {
       if (!isMain || code === -3 || internalName(url)) return
       tab.errorUrl = url
+      // فاحص الفيروسات أوقف هذا الموقع
+      const sp = shieldPending.get(wc.id)
+      if (sp) {
+        shieldPending.delete(wc.id)
+        tab.errorUrl = sp.url
+        wc.loadURL(PAGES_URL + '#blocked|' + sp.kind + '|' + encodeURIComponent(sp.url))
+        return
+      }
       wc.loadURL(PAGES_URL + '#error|' + code + '|' + encodeURIComponent(desc) + '|' + encodeURIComponent(url))
     })
     wc.on('render-process-gone', (e, d) => {
@@ -255,12 +310,12 @@ class IbraWindow {
           action: 'allow',
           overrideBrowserWindowOptions: {
             icon: ICON, autoHideMenuBar: true, backgroundColor: '#ffffff',
-            webPreferences: { session: ses, sandbox: true, contextIsolation: true },
+            webPreferences: { session: tab.proxied ? proxy.session : ses, sandbox: true, contextIsolation: true },
           },
         }
       }
       const bg = d.disposition === 'background-tab'
-      this.newTab(d.url, !bg, { afterActive: true })
+      this.newTab(d.url, !bg, { afterActive: true, proxied: tab.proxied })
       return { action: 'deny' }
     })
     wc.on('did-create-window', (w) => {
@@ -278,22 +333,25 @@ class IbraWindow {
     this.win.contentView.addChildView(tab.view)
     if (this.overlay) this.win.contentView.addChildView(this.ui)
     this.layout()
-    extensions.selectTab(tab.wc)
+    extFor(tab.proxied).selectTab(tab.wc)
     if (this.win.isFocused() && !this.overlay) tab.wc.focus()
     this.sendState()
   }
 
-  closeTab(id) {
+  closeTab(id, opts = {}) {
     const idx = this.tabs.findIndex(t => t.id === id)
     if (idx < 0) return
     const tab = this.tabs[idx]
     if (tab.closing) return
     tab.closing = true
     const url = tab.wc.getURL()
-    if (url && internalName(url) !== 'newtab') closedTabs.push({ url: internalName(url) === 'error' ? tab.errorUrl : url, title: tab.title || url, favicon: tab.favicon || '', internal: !!internalName(url) && internalName(url) !== 'error', time: Date.now() })
+    const iname = internalName(url)
+    if (!opts.silent && url && iname !== 'newtab') closedTabs.push({ proxied: tab.proxied, url: (iname === 'error' || iname === 'blocked') ? tab.errorUrl : iname === 'proxywait' ? tab.pendingUrl : url, title: tab.title || url, favicon: tab.favicon || '', internal: !!internalName(url) && internalName(url) !== 'error', time: Date.now() })
     if (closedTabs.length > 25) closedTabs.shift()
     this.tabs.splice(idx, 1)
-    try { extensions.removeTab(tab.wc) } catch {}
+    try { extFor(tab.proxied).removeTab(tab.wc) } catch {}
+    shieldPending.delete(tab.wc.id)
+    tabMedia.delete(tab.wc.id)
     try { this.win.contentView.removeChildView(tab.view) } catch {}
     try { tab.wc.close() } catch {}
     if (!this.tabs.length) { this.win.close(); return }
@@ -341,7 +399,7 @@ class IbraWindow {
       const d = displayUrl(t)
       return {
         id: t.id, title: t.title || d || 'جديد', favicon: t.favicon, loading: t.loading,
-        url: d, internal: !!internalName(url) && internalName(url) !== 'error', audible: t.audible, muted: t.wc.isAudioMuted(),
+        url: d, internal: !!internalName(url) && !['error', 'blocked', 'proxywait'].includes(internalName(url)), audible: t.audible, muted: t.wc.isAudioMuted(), proxied: !!t.proxied,
       }
     })
     const a = this.active()
@@ -352,11 +410,20 @@ class IbraWindow {
         canBack: a.wc.navigationHistory.canGoBack(), canForward: a.wc.navigationHistory.canGoForward(),
         url: durl, secure: durl.startsWith('https://') && internalName(a.wc.getURL()) !== 'error', error: internalName(a.wc.getURL()) === 'error', internal: !!internalName(a.wc.getURL()) && internalName(a.wc.getURL()) !== 'error',
         bookmarked: !!bookmarks.find(b => b.url === durl), zoom: Math.round(100 * Math.pow(1.2, a.wc.getZoomLevel())),
-        tabId: a.wc.id, loading: a.loading,
+        tabId: a.wc.id, loading: a.loading, proxied: !!a.proxied, partition: a.proxied ? proxy.partition : '',
+        blocked: internalName(a.wc.getURL()) === 'blocked', wait: internalName(a.wc.getURL()) === 'proxywait',
+        ads: adblock ? adblock.tabCount(a.wc.id) : 0, host: (() => { try { return /^https?:/.test(durl) ? new URL(durl).hostname : '' } catch { return '' } })(),
       }
+      nav.siteAllowed = !!(adblock && nav.host && adblock.siteAllowed(nav.host))
+      nav.internal = nav.internal && !nav.blocked && !nav.wait
     }
     const closed = closedTabs.slice(-15).reverse().map(c => ({ title: c.title, url: c.url, favicon: c.favicon, internal: c.internal, time: c.time }))
-    return { tabs, activeId: this.activeId, nav, closed, ibdm: !!IBDM.cfg, settings, bookmarks: bookmarks.slice(0, 60), platform: process.platform, blur: HAS_BLUR, maximized: this.win.isMaximized() }
+    const features = {
+      proxy: proxy ? (({ enabled, mode, status, progress, message, torAvailable, transport }) => ({ enabled, mode, status, progress, message, torAvailable, transport }))(proxy.info()) : {},
+      adblock: adblock ? (({ enabled, ready, total }) => ({ enabled, ready, total }))(adblock.info()) : {},
+      shield: shield ? { enabled: shield.info().enabled, blocked: shield.info().stats.blocked } : {},
+    }
+    return { tabs, activeId: this.activeId, nav, closed, features, ibdm: !!IBDM.cfg, settings, bookmarks: bookmarks.slice(0, 60), platform: process.platform, blur: HAS_BLUR, maximized: this.win.isMaximized() }
   }
 
   sendState() {
@@ -375,11 +442,11 @@ function reopenClosed(w, index = 0) {
   const i = closedTabs.length - 1 - index
   if (i < 0 || i >= closedTabs.length) return
   const [c] = closedTabs.splice(i, 1)
-  w.newTab(c.url)
+  w.newTab(c.url, true, { proxied: c.proxied })
 }
 
 function pageTitle(n) {
-  return ({ newtab: 'علامة تبويب جديدة', settings: 'الإعدادات', history: 'السجل', bookmarks: 'الإشارات المرجعية', downloads: 'التنزيلات', extensions: 'الإضافات', about: 'حول IBRA CROM', error: 'تعذر الوصول' })[n] || 'IBRA CROM'
+  return ({ blocked: 'موقع خطير!', proxywait: 'جاري الاتصال بالبروكسي…', newtab: 'علامة تبويب جديدة', settings: 'الإعدادات', history: 'السجل', bookmarks: 'الإشارات المرجعية', downloads: 'التنزيلات', extensions: 'الإضافات', about: 'حول IBRA CROM', error: 'تعذر الوصول' })[n] || 'IBRA CROM'
 }
 
 function winOf(bw) { for (const w of windows) if (w.win === bw) return w }
@@ -419,6 +486,7 @@ function handleShortcut(w, i) {
   if (ctrl && i.shift && (k === 't' || code === 'KeyT')) { reopenClosed(w); return true }
   if (ctrl && (k === 'w' || code === 'KeyW' || k === 'f4')) { if (tab) w.closeTab(tab.id); return true }
   if (ctrl && !i.shift && (k === 'n' || code === 'KeyN')) { new IbraWindow(); return true }
+  if (ctrl && i.shift && (k === 'n' || code === 'KeyN')) { menuAction(w, 'proxyTab'); return true }
   if (ctrl && k === 'tab') { cycle(w, i.shift ? -1 : 1); return true }
   if (ctrl && (k === 'pagedown')) { cycle(w, 1); return true }
   if (ctrl && (k === 'pageup')) { cycle(w, -1); return true }
@@ -504,8 +572,19 @@ function setSettings(patch) {
   settings = Object.assign({}, settings, patch)
   store.save('settings', settings)
   if (themeChanged) for (const w of windows) w.applyTheme()
+  if ('proxyEnabled' in patch && patch.proxyEnabled === false) {
+    for (const w of windows) for (const t of [...w.tabs]) if (t.proxied) w.setTabProxy(t.id, false)
+    proxy?.shutdown()
+  }
+  if (['proxyMode', 'proxyCustom', 'torTransport', 'torBridges'].some(k => k in patch) && proxy && proxyInUse()) proxy.restart()
   broadcastState()
   notifyPages('settings')
+}
+function proxyInUse() { for (const w of windows) if (w.tabs.some(t => t.proxied)) return true; return false }
+let featT = null
+function featuresChanged() {
+  broadcastState()
+  if (!featT) featT = setTimeout(() => { featT = null; notifyPages('features') }, 800)
 }
 
 function notifyPages(what) {
@@ -522,6 +601,7 @@ function showContextMenu(w, tab, p) {
   if (p.linkURL) {
     items.push({ label: 'فتح الرابط في علامة تبويب جديدة', click: () => w.newTab(p.linkURL, false, { afterActive: true }) })
     items.push({ label: 'فتح الرابط في نافذة جديدة', click: () => new IbraWindow({ urls: [p.linkURL] }) })
+    if (settings.proxyEnabled !== false && !tab.proxied) items.push({ label: 'فتح الرابط في لسان بروكسي', click: () => w.newTab(p.linkURL, true, { afterActive: true, proxied: true }) })
     items.push({ label: 'حفظ الرابط باسم...', click: () => wc.downloadURL(p.linkURL) })
     items.push({ label: 'نسخ عنوان الرابط', click: () => clipboard.writeText(p.linkURL) })
     sep()
@@ -571,6 +651,14 @@ function showContextMenu(w, tab, p) {
     if ((p.mediaType === 'video' || p.mediaType === 'audio') && /^https?:/i.test(p.srcURL)) items.push({ label: 'تحميل هذا الفيديو بواسطة IBDM Pro' + mark, click: () => ibdmFromMenu('media', p.srcURL, wc) })
     else if (p.mediaType === 'image' && /^https?:/i.test(p.srcURL)) items.push({ label: 'تحميل الصورة بواسطة IBDM Pro' + mark, click: () => ibdmFromMenu('link', p.srcURL, wc) })
     if (!p.linkURL && /^https?:/i.test(wc.getURL())) items.push({ label: 'تحميل فيديو هذه الصفحة بواسطة IBDM Pro' + mark, click: () => ibdmFromMenu('media', wc.getURL(), wc) })
+    const found = [...(tabMedia.get(wc.id)?.values() || [])]
+    if (found.length) {
+      const sz = (b) => b > 0 ? (b > 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.round(b / 1024) + ' KB') : ''
+      items.push({ label: `الفيديوهات في هذه الصفحة (${found.length}) — IBDM Pro`, submenu: found.slice(-15).reverse().map(m => {
+        let name = ''; try { name = decodeURIComponent(new URL(m.url).pathname.split('/').pop()) } catch {}
+        return { label: `${m.type === 'stream' ? 'بث' : m.type === 'audio' ? 'صوت' : 'فيديو'} ${sz(m.size)} — ${(name || m.url).slice(0, 50)}`, click: () => ibdmFromMenu(m.type === 'stream' ? 'media' : 'link', m.url, wc) }
+      }) })
+    }
   }
   try {
     // عناصر IBDM من الإضافة المدمجة مكررة مع العناصر أعلاه فلا نعرضها مرتين
@@ -637,6 +725,11 @@ function ibdmReq(method, p, body) {
 async function ibdmPing() {
   const was = !!IBDM.cfg
   IBDM.cfg = await ibdmReq('GET', '/ping'); IBDM.at = Date.now()
+  // تم تحديث برنامج IBDM Pro؟ نحمّل إضافته الأحدث تلقائياً
+  if (IBDM.cfg?.version && IBDM.cfg.version !== IBDM.checkedFor && verNewer(IBDM.cfg.version, ibdmExt.version)) {
+    IBDM.checkedFor = IBDM.cfg.version
+    reloadIbdmExtension().then(() => { if (verNewer(IBDM.cfg.version, ibdmExt.version)) ibdmGithubCheck() })
+  }
   if (was !== !!IBDM.cfg) { broadcastState(); notifyPages('settings') }
   return IBDM.cfg
 }
@@ -673,19 +766,21 @@ function ibdmFromMenu(kind, url, wc) {
   let fileName = ''; try { fileName = decodeURIComponent(new URL(url).pathname.split('/').pop() || '') } catch {}
   return ibdmSend({ kind, url, pageUrl: page, referrer: page, title: wc && !wc.isDestroyed() ? wc.getTitle() : '', fileName: kind === 'link' ? fileName : '' }, wc)
 }
-function builtinIbdmPath() {
-  return path.join(__dirname, 'builtin', 'ibdm').replace(/app\.asar([\\/])/, 'app.asar.unpacked$1')
-}
 
 function setupDownloads() {
   ibdmPing(); setInterval(ibdmPing, 5000)
-  ses.on('will-download', (e, item, srcWc) => {
-    if (ibdmShouldTake(item)) {
+  for (const s of [ses, proxy.session]) attachDownloads(s)
+}
+function attachDownloads(s) {
+  const isProxy = s === proxy.session
+  s.on('will-download', (e, item, srcWc) => {
+    // تحميلات ألسن البروكسي تبقى داخل المتصفح حتى تمر عبر البروكسي
+    if (!isProxy && ibdmShouldTake(item)) {
       e.preventDefault()
       const url = item.getURL()
       const page = srcWc && !srcWc.isDestroyed() ? srcWc.getURL() : ''
       ibdmSend({ kind: 'file', url, pageUrl: page, referrer: page, fileName: item.getFilename() || '', mime: item.getMimeType() || '', size: item.getTotalBytes() > 0 ? item.getTotalBytes() : -1 }, srcWc)
-        .then(ok => { if (!ok) { ibdmLetThrough.add(url); ses.downloadURL(url) } })
+        .then(ok => { if (!ok) { ibdmLetThrough.add(url); s.downloadURL(url) } })
       return
     }
     const id = Date.now() + '-' + Math.floor(Math.random() * 1e6)
@@ -720,11 +815,25 @@ function setupDownloads() {
         const n = new Notification({ title: 'اكتمل التنزيل', body: rec.filename, icon: path.join(__dirname, 'assets', 'logo.png') })
         n.on('click', () => shell.showItemInFolder(rec.path)); n.show()
       }
+      if (state === 'completed') scanDownload(rec)
     })
     pushDownloads(true)
     for (const w of windows) w.ui.webContents.send('downloads:started')
   })
 }
+// فحص الملف المنزّل بـ Windows Defender
+async function scanDownload(rec) {
+  if (!shield || !rec.path) return
+  rec.scan = 'scanning'; pushDownloads(true)
+  const r = await shield.scanFile(rec.path)
+  rec.scan = r || ''
+  store.save('downloads', downloadsList.slice(-500)); pushDownloads(true)
+  if (r === 'threat') {
+    for (const w of windows) w.ui.webContents.send('toast', '⚠ تحذير: الملف «' + rec.filename + '» يحتوي على فيروس! احذفه من صفحة التنزيلات')
+    if (Notification.isSupported()) new Notification({ title: 'IBRA Shield — تم اكتشاف فيروس!', body: rec.filename + '\nلا تفتح هذا الملف واحذفه من صفحة التنزيلات.', icon: path.join(__dirname, 'assets', 'logo.png'), urgency: 'critical' }).show()
+  }
+}
+
 function downloadAction(id, action) {
   const rec = downloadsList.find(d => d.id === id)
   const item = liveItems.get(id)
@@ -737,14 +846,17 @@ function downloadAction(id, action) {
   if (action === 'retry') focusedWin()?.active()?.wc.downloadURL(rec.url)
   if (action === 'remove') { if (item) item.cancel(); downloadsList = downloadsList.filter(d => d.id !== id) }
   if (action === 'copy') clipboard.writeText(rec.url)
+  if (action === 'trash' && rec.path) { shell.trashItem(rec.path).catch(() => {}); rec.state = 'cancelled'; rec.scan = 'deleted' }
+  if (action === 'rescan') scanDownload(rec)
   store.save('downloads', downloadsList.slice(-500))
   pushDownloads(true)
 }
 
 // ═════════════════ الأذونات ═════════════════
-function setupPermissions() {
+function setupPermissions() { for (const s of [ses, proxy.session]) attachPermissions(s) }
+function attachPermissions(s) {
   const ASK = { media: 'الكاميرا والميكروفون', geolocation: 'موقعك الجغرافي', notifications: 'إظهار الإشعارات', 'display-capture': 'مشاركة الشاشة', midiSysex: 'أجهزة MIDI' }
-  ses.setPermissionRequestHandler(async (wc, permission, cb, details) => {
+  s.setPermissionRequestHandler(async (wc, permission, cb, details) => {
     if (!ASK[permission]) return cb(true)
     let origin = ''
     try { origin = new URL(details.requestingUrl || wc.getURL()).origin } catch {}
@@ -763,15 +875,13 @@ function setupPermissions() {
 }
 
 // ═════════════════ الإضافات ═════════════════
-async function setupExtensions() {
-  const { ElectronChromeExtensions } = require('electron-chrome-extensions')
-  const { installChromeWebStore, uninstallExtension } = require('electron-chrome-web-store')
-  extensions = new ElectronChromeExtensions({
+function makeExtensions(ElectronChromeExtensions, s, proxied) {
+  return new ElectronChromeExtensions({
     license: 'GPL-3.0',
-    session: ses,
+    session: s,
     async createTab(details) {
       const w = [...windows].find(x => x.win.id === details.windowId) || focusedWin() || new IbraWindow({ urls: ['about:blank'] })
-      const tab = w.newTab(details.url || 'ibra://newtab', details.active !== false, { skipExtensions: true })
+      const tab = w.newTab(details.url || 'ibra://newtab', details.active !== false, { skipExtensions: true, proxied })
       return [tab.wc, w.win]
     },
     selectTab(wc, bw) { const w = winOf(bw) || winOfTab(wc); const t = w?.byWc(wc); if (t) w.activate(t.id) },
@@ -783,19 +893,65 @@ async function setupExtensions() {
     },
     removeWindow(bw) { bw.close() },
   })
-  extensions.on('browser-action-popup-created', () => {})
+}
+function builtinIbdmDir() {
+  return path.join(__dirname, 'builtin', 'ibdm').replace(/app\.asar([\\/])/, 'app.asar.unpacked$1')
+}
+const extIdByPath = (s, dir) => s.extensions.getAllExtensions().find(x => x.path === dir)?.id
+async function reloadIbdmExtension() {
+  const next = resolveIbdm(builtinIbdmDir(), app.getPath('userData'))
+  if (next.dir === ibdmExt.dir) return
+  const prev = ibdmExt
+  ibdmExt = next
+  for (const s of [ses, proxy.session]) {
+    const id = extIdByPath(s, prev.dir); if (id) s.extensions.removeExtension(id)
+    try { await s.extensions.loadExtension(next.dir) } catch (e) { console.error('IBDM reload failed', e.message) }
+  }
+  notifyPages('extensions')
+}
+// تحديث إضافة IBDM من صفحة إصدارات GitHub (عندما لا يكون برنامج IBDM Pro مثبتاً)
+let ibdmGhBusy = false
+async function ibdmGithubCheck() {
+  if (ibdmGhBusy) return; ibdmGhBusy = true
+  try { if (await checkGithub(app.getPath('userData'), ibdmExt.version, (u, o) => net.fetch(u, o))) await reloadIbdmExtension() }
+  catch (e) { console.error('IBDM GitHub check', e.message) }
+  finally { ibdmGhBusy = false }
+}
+// نسخة واحدة فقط من IBDM — أي نسخة ثانية (مثبتة يدوياً أو من السوق) تُزال حتى لا يتكرر الزر العائم
+function dedupeIbdm(s, x) {
+  if (!isIbdmExtension(x) || x.path === ibdmExt.dir) return false
+  try { s.extensions.removeExtension(x.id) } catch {}
+  if (unpackedList.includes(x.path)) { unpackedList = unpackedList.filter(p => p !== x.path); store.save('unpacked', unpackedList) }
+  return true
+}
+async function setupExtensions() {
+  const { ElectronChromeExtensions } = require('electron-chrome-extensions')
+  const { installChromeWebStore, uninstallExtension, loadAllExtensions } = require('electron-chrome-web-store')
+  extensions = makeExtensions(ElectronChromeExtensions, ses, false)
+  extProxy = makeExtensions(ElectronChromeExtensions, proxy.session, true)
   ElectronChromeExtensions.handleCRXProtocol(ses)
   module.exports.uninstallExtension = uninstallExtension
   try {
     await installChromeWebStore({ session: ses, allowUnpackedExtensions: true, autoUpdate: true })
   } catch (e) { console.error('webstore init failed', e) }
   if (process.env.IBRA_TEST_SHOT) ses.serviceWorkers.on('console-message', (e, d) => console.log('[sw]', JSON.stringify(d || e)))
-  try { await ses.extensions.loadExtension(builtinIbdmPath()) } catch (e) { console.error('IBDM extension load failed', e.message) }
+  ibdmExt = resolveIbdm(builtinIbdmDir(), app.getPath('userData'))
+  try { await ses.extensions.loadExtension(ibdmExt.dir) } catch (e) { console.error('IBDM extension load failed', e.message) }
   for (const p of unpackedList) {
     try { await ses.extensions.loadExtension(p) } catch (e) { console.error('unpacked load failed', p, e.message) }
   }
-  ses.extensions.on('extension-loaded', () => { notifyPages('extensions'); broadcastState() })
-  ses.extensions.on('extension-unloaded', () => { notifyPages('extensions'); broadcastState() })
+  // نفس الإضافات تعمل أيضاً داخل ألسن البروكسي
+  const ps = proxy.session
+  try { await loadAllExtensions(ps, path.join(app.getPath('userData'), 'Extensions'), { allowUnpacked: true }) } catch (e) { console.error('proxy ext load', e.message) }
+  for (const x of ses.extensions.getAllExtensions()) if (!ps.extensions.getExtension(x.id)) { try { await ps.extensions.loadExtension(x.path) } catch {} }
+  for (const s of [ses, ps]) for (const x of s.extensions.getAllExtensions()) dedupeIbdm(s, x)
+  ps.extensions.on('extension-loaded', (e, x) => dedupeIbdm(ps, x))
+  ses.extensions.on('extension-loaded', (e, x) => {
+    if (dedupeIbdm(ses, x)) { for (const w of windows) w.ui.webContents.send('toast', 'إضافة IBDM Pro مدمجة مسبقاً في IBRA CROM — لا حاجة لتثبيتها مرة ثانية'); return }
+    notifyPages('extensions'); broadcastState(); if (!ps.extensions.getExtension(x.id)) ps.extensions.loadExtension(x.path).catch(() => {})
+  })
+  setTimeout(ibdmGithubCheck, 20000); setInterval(ibdmGithubCheck, 12 * 3600e3)
+  ses.extensions.on('extension-unloaded', (e, x) => { notifyPages('extensions'); broadcastState(); if (ps.extensions.getExtension(x.id)) ps.extensions.removeExtension(x.id) })
 }
 
 function listExtensions() {
@@ -806,7 +962,7 @@ function listExtensions() {
     if (size) { try { icon = pathToFileURL(path.join(x.path, icons[size])).href } catch {} }
     return {
       id: x.id, name: x.name, version: x.version, description: x.manifest.description || '',
-      icon, unpacked: unpackedList.includes(x.path), path: x.path, builtin: x.path === builtinIbdmPath(),
+      icon, unpacked: unpackedList.includes(x.path), path: x.path, builtin: x.path === ibdmExt.dir,
       options: x.manifest.options_page || x.manifest.options_ui?.page || '',
     }
   }).filter(x => !/^(Chrome Web Store|chrome-webstore)$/i.test(x.name))
@@ -814,7 +970,7 @@ function listExtensions() {
 
 async function removeExtension(id) {
   const x = ses.extensions.getExtension(id)
-  if (!x || x.path === builtinIbdmPath()) return
+  if (!x || x.path === ibdmExt.dir) return
   if (unpackedList.includes(x.path)) {
     unpackedList = unpackedList.filter(p => p !== x.path); store.save('unpacked', unpackedList)
     ses.extensions.removeExtension(id)
@@ -837,6 +993,11 @@ function setupIpc() {
   ipcMain.on('tab:reopen', (e, index) => { const w = W(e); if (w) reopenClosed(w, index | 0) })
   ipcMain.on('tab:reopen-all', (e) => { const w = W(e); if (!w) return; while (closedTabs.length) reopenClosed(w, 0) })
   ipcMain.on('ibdm:show', () => ibdmReq('POST', '/show', {}))
+  ipcMain.on('proxy:toggle', (e, id) => { const w = W(e); const t = id ? w?.tabs.find(x => x.id === id) : w?.active(); if (t) w.setTabProxy(t.id, !t.proxied) })
+  ipcMain.on('proxy:newtab', (e) => { const w = W(e); if (w) { w.newTab('ibra://newtab', true, { proxied: true }); focusAddress(w) } })
+  ipcMain.on('proxy:retry', () => proxy.restart())
+  ipcMain.on('adblock:site', (e, allowed) => { const w = W(e); const t = w?.active(); if (!t) return; let h = ''; try { h = new URL(displayUrl(t)).hostname } catch {} if (h) { adblock.setSiteAllowed(h, allowed); t.wc.reload() } })
+  ipcMain.on('feature:set', (e, key, val) => { if (['adblockEnabled', 'shieldEnabled', 'proxyEnabled'].includes(key)) { setSettings({ [key]: !!val }); if (key === 'adblockEnabled') W(e)?.active()?.wc.reload() } })
   ipcMain.on('tab:mute', (e, id) => { const w = W(e); const t = w?.tabs.find(x => x.id === id); if (t) { t.wc.setAudioMuted(!t.wc.isAudioMuted()); w.sendState() } })
   ipcMain.on('tab:menu', (e, id) => {
     const w = W(e); const t = w?.tabs.find(x => x.id === id); if (!t) return
@@ -844,6 +1005,7 @@ function setupIpc() {
       { label: 'علامة تبويب جديدة', click: () => w.newTab('ibra://newtab', true, { index: w.tabs.indexOf(t) + 1 }) },
       { label: 'إعادة التحميل', click: () => t.wc.reload() },
       { label: 'تكرار', click: () => w.newTab(t.wc.getURL(), true, { index: w.tabs.indexOf(t) + 1 }) },
+      ...(settings.proxyEnabled !== false ? [{ label: t.proxied ? 'إيقاف البروكسي لهذا اللسان' : 'تشغيل البروكسي لهذا اللسان', click: () => w.setTabProxy(t.id, !t.proxied) }] : []),
       { label: t.wc.isAudioMuted() ? 'إلغاء كتم الموقع' : 'كتم صوت الموقع', click: () => { t.wc.setAudioMuted(!t.wc.isAudioMuted()); w.sendState() } },
       { label: 'نقل إلى نافذة جديدة', click: () => { const u = t.wc.getURL(); w.closeTab(t.id); new IbraWindow({ urls: [u] }) } },
       { type: 'separator' },
@@ -941,6 +1103,7 @@ function setupIpc() {
     const r = await dialog.showOpenDialog(w?.win, { title: 'اختر مجلد الإضافة (يحتوي manifest.json)', properties: ['openDirectory'] })
     if (r.canceled || !r.filePaths[0]) return { ok: false }
     try {
+      try { const m = JSON.parse(fs.readFileSync(path.join(r.filePaths[0], 'manifest.json'), 'utf8')); if (isIbdmExtension({ name: m.name })) return { ok: false, error: 'إضافة IBDM Pro مدمجة مسبقاً وتتحدث تلقائياً — لا حاجة لتحميلها' } } catch {}
       const x = await ses.extensions.loadExtension(r.filePaths[0])
       if (!unpackedList.includes(x.path)) { unpackedList.push(x.path); store.save('unpacked', unpackedList) }
       return { ok: true, name: x.name }
@@ -984,6 +1147,32 @@ function setupIpc() {
   })
   handle('ibdmShow', async () => { const ok = await ibdmReq('POST', '/show', {}); return !!ok })
   handle('ibdmCheck', async () => { const c = await ibdmPing(); return c ? { version: c.version } : null })
+  handle('features', () => ({
+    proxy: proxy.info(), adblock: adblock.info(), shield: shield.info(),
+    ibdm: { version: ibdmExt.version, source: ibdmExt.source, app: IBDM.cfg ? IBDM.cfg.version : null },
+  }))
+  handle('setFeature', (w, e, key, val) => { if (['adblockEnabled', 'shieldEnabled', 'proxyEnabled', 'shieldScanDownloads'].includes(key)) setSettings({ [key]: !!val }); return true })
+  handle('adblockRefresh', () => adblock.refresh())
+  handle('adblockAllowRemove', (w, e, host) => { adblock.setSiteAllowed(host, false); return adblock.info() })
+  handle('shieldRefresh', () => shield.refresh(true))
+  handle('shieldProceed', (w, e, url) => { if (/^https?:/i.test(url)) { shield.allow(url); e.sender.loadURL(url) } })
+  handle('setProxySettings', (w, e, p) => {
+    const patch = {}
+    if (p.mode) patch.proxyMode = p.mode === 'custom' ? 'custom' : 'tor'
+    if (p.transport) patch.torTransport = p.transport
+    if (typeof p.bridges === 'string') patch.torBridges = p.bridges
+    if (p.custom) {
+      const old = settings.proxyCustom || {}
+      const c = { scheme: ['http', 'https', 'socks5', 'socks4'].includes(p.custom.scheme) ? p.custom.scheme : 'socks5', host: String(p.custom.host || '').trim(), port: String(p.custom.port || '').trim(), user: String(p.custom.user || ''), pass: old.pass || '' }
+      if (typeof p.custom.pass === 'string' && p.custom.pass !== '') c.pass = proxy.encPass(p.custom.pass)
+      if (p.custom.clearPass) c.pass = ''
+      patch.proxyCustom = c
+    }
+    setSettings(patch)
+    return proxy.info()
+  })
+  handle('proxyRetry', () => proxy.restart())
+  handle('proxyCancelTab', (w, e) => { const t = w?.byWc(e.sender); if (t) w.setTabProxy(t.id, false) })
   handle('navigate', (w, e, url) => { e.sender.loadURL(toLoadable(url)).catch(() => {}) })
   handle('openTab', (w, e, url, bg) => w?.newTab(url, !bg, { afterActive: true }))
   handle('openStore', (w) => w?.newTab('https://chromewebstore.google.com/'))
@@ -997,6 +1186,7 @@ function menuAction(w, a) {
   const map = {
     newTab: () => { w.newTab('ibra://newtab'); focusAddress(w) },
     newWindow: () => new IbraWindow(),
+    proxyTab: () => { if (settings.proxyEnabled !== false) { w.newTab('ibra://newtab', true, { proxied: true }); focusAddress(w) } },
     history: () => w.newTab('ibra://history'),
     downloads: () => w.newTab('ibra://downloads'),
     bookmarks: () => w.newTab('ibra://bookmarks'),
@@ -1053,9 +1243,72 @@ app.on('web-contents-created', (e, wc) => {
   wc.on('will-attach-webview', (ev) => ev.preventDefault())
 })
 
+// ═════════════════ الإضافات المدمجة: البروكسي + حاجب الإعلانات + فاحص الفيروسات ═════════════════
+function setupFeatures() {
+  const ctx = {
+    store, userData: app.getPath('userData'), vendorDir: VENDOR_DIR,
+    settings: () => settings, setSettings, changed: featuresChanged,
+  }
+  proxy = createProxy(ctx)
+  adblock = createAdblock(ctx)
+  shield = createShield(ctx)
+  proxy.session.setUserAgent(chromeUA)
+  adblock.init()
+  shield.init()
+  for (const s of [ses, proxy.session]) { if (!process.env.IBRA_NO_NETPIPE) attachNetPipeline(s); adblock.attach(s) }
+  // أول تشغيل للسان بروكسي: الجلسة مغلقة حتى يجهز البروكسي (لا تسريب)
+  proxy.session.setProxy({ proxyRules: 'socks5://127.0.0.1:1', proxyBypassRules: '<local>' })
+}
+
+// Electron يسمح بمستمع واحد لكل حدث، لذلك نمرر كل طلب على الفاحص ثم حاجب الإعلانات
+function attachNetPipeline(s) {
+  s.webRequest.onBeforeRequest({ urls: ['<all_urls>'] }, (d, cb) => {
+    try {
+      if (d.resourceType === 'mainFrame' || d.resourceType === 'subFrame') {
+        const kind = shield.check(d.url)
+        if (kind) {
+          shield.blocked()
+          if (d.resourceType === 'mainFrame' && d.webContentsId) shieldPending.set(d.webContentsId, { url: d.url, kind })
+          return cb({ cancel: true })
+        }
+      }
+      cb(adblock.onBeforeRequest(d) || {})
+    } catch (e) { cb({}) }
+  })
+  s.webRequest.onHeadersReceived({ urls: ['<all_urls>'] }, (d, cb) => {
+    try { sniffMedia(d) } catch {}
+    try { cb(adblock.onHeadersReceived(d) || {}) } catch { cb({}) }
+  })
+}
+
+// ── التقاط الفيديوهات في الصفحة لـ IBDM Pro (نفس قواعد إضافة IBDM) ──
+const tabMedia = new Map() // webContentsId -> Map(url -> { url, size, type })
+const MEDIA_EXT = /\.(mp4|webm|mkv|mov|m4v|flv|3gp|mp3|m4a|aac|ogg|opus|wav|flac|m3u8|mpd)(\?|$)/i
+const MEDIA_SEGMENT = /\.(ts|m4s|aac\.part)(\?|$)|[?&](range|bytestart)=|\/seg-?\d+|segment\d|frag\d|chunk-?\d/i
+function sniffMedia(d) {
+  if (!d.webContentsId || d.statusCode >= 400 || !/^https?:/i.test(d.url) || MEDIA_SEGMENT.test(d.url)) return
+  const h = {}
+  for (const [k, v] of Object.entries(d.responseHeaders || {})) h[k.toLowerCase()] = [].concat(v)[0]
+  const type = (h['content-type'] || '').toLowerCase()
+  const playlist = /mpegurl|dash\+xml/.test(type) || /\.(m3u8|mpd)(\?|$)/i.test(d.url)
+  if (!(type.startsWith('video/') || type.startsWith('audio/') || playlist || (d.resourceType === 'media' && MEDIA_EXT.test(d.url)))) return
+  let size = parseInt(h['content-length'] || '-1', 10)
+  const range = /\/(\d+)$/.exec(h['content-range'] || ''); if (range) size = parseInt(range[1], 10)
+  if (!playlist && size > 0 && size < 300 * 1024) return
+  if (!tabMedia.has(d.webContentsId)) tabMedia.set(d.webContentsId, new Map())
+  const m = tabMedia.get(d.webContentsId)
+  if (!m.has(d.url) && m.size < 50) m.set(d.url, { url: d.url, size, type: playlist ? 'stream' : type.startsWith('audio/') ? 'audio' : 'video' })
+}
+
+app.on('login', (e, wc, details, authInfo, cb) => {
+  const c = proxy?.login(authInfo)
+  if (c) { e.preventDefault(); cb(c.user, c.pass) }
+})
+
 app.whenReady().then(async () => {
   ses = session.fromPartition('persist:ibracrom')
   ses.setUserAgent(chromeUA)
+  setupFeatures()
   setupPermissions()
   setupDownloads()
   setupIpc()
@@ -1069,9 +1322,10 @@ app.whenReady().then(async () => {
   } else if (settings.startup === 'home') new IbraWindow({ urls: argvUrls.length ? argvUrls : [homeUrl()] })
   else new IbraWindow({ urls: argvUrls.length ? argvUrls : ['ibra://newtab'] })
 
-  if (process.env.IBRA_TEST_SHOT) require('./test-shot')(windows, { setSettings, menuAction })
+  if (process.env.IBRA_TEST_SHOT) module.exports.tabMedia = tabMedia
+  if (process.env.IBRA_TEST_SHOT) require(process.env.IBRA_TEST_FILE || './test-shot')(windows, { setSettings, menuAction })
 })
 
-app.on('before-quit', () => { saveSession(); store.flush() })
+app.on('before-quit', () => { saveSession(); proxy?.shutdown(); store.flush() })
 app.on('window-all-closed', () => { store.flush(); if (process.platform !== 'darwin') app.quit() })
 app.on('activate', () => { if (!windows.size) new IbraWindow() })
