@@ -44,8 +44,11 @@ jobs:
           name: IBRA CROM v${{ steps.ver.outputs.v }}
           make_latest: true
           body: |
-            IBRA CROM — متصفح مبني على Chromium مع دعم إضافات سوق Chrome، IBDM Pro مدمج، بروكسي لكل لسان (Tor)، حاجب إعلانات، وفاحص فيروسات المواقع.
-            برمجة و تطوير ابراهيم الخزرجي
+            ${{ github.event.head_commit.message }}
+
+            —
+            IBRA CROM — برمجة و تطوير ابراهيم الخزرجي
           files: |
             dist/*.exe
             dist/*.blockmap
+            dist/latest.yml

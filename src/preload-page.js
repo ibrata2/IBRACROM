@@ -8,7 +8,7 @@ if (location.protocol === 'file:' && /\/pages\/internal\.html$/.test(decodeURICo
     'moveBookmark', 'importChrome', 'downloads', 'downloadAction', 'clearDownloads', 'extensions', 'removeExtension', 'loadUnpacked',
     'openExtensionOptions', 'updateExtensions', 'chooseDownloadsDir', 'clearData', 'setDefaultBrowser', 'topSites', 'navigate', 'openTab',
     'openStore', 'appInfo', 'openPath', 'ibdmShow', 'ibdmCheck',
-    'features', 'setFeature', 'adblockRefresh', 'adblockAllowRemove', 'shieldRefresh', 'shieldProceed', 'setProxySettings', 'proxyRetry', 'proxyCancelTab']
+    'features', 'setFeature', 'adblockRefresh', 'adblockAllowRemove', 'shieldRefresh', 'shieldProceed', 'setProxySettings', 'proxyRetry', 'proxyCancelTab', 'updateInfo', 'updateCheck', 'updateDownload', 'updateInstall']
   const api = {}
   for (const n of names) api[n] = call(n)
   api.onChanged = (cb) => ipcRenderer.on('page:changed', (e, what) => cb(what))

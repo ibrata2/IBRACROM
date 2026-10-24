@@ -47,6 +47,7 @@ ibra.onChanged(async (what) => {
   if (what === 'settings') { await loadCfg(); if (route() === 'settings' || route() === 'newtab') render() }
   if (what === 'extensions' && route() === 'extensions') render()
   if (what === 'features' && route() === 'extensions') render()
+  if (what === 'features' && route() === 'about') drawUpdateStatus()
   if ((what === 'features' || what === 'settings') && route() === 'settings') refreshProxyStatus()
   if (what === 'bookmarks' && (route() === 'bookmarks' || route() === 'newtab')) render()
 })
@@ -421,14 +422,25 @@ PAGES.proxywait = async () => {
 }
 
 // ═════════ حول ═════════
+async function drawUpdateStatus() {
+  const el = app.querySelector('#ust'), b = app.querySelector('#ubtn'); if (!el) return
+  const U = await ibra.updateInfo()
+  el.textContent = ({ checking: 'جاري البحث عن تحديثات…', latest: 'أنت تستخدم أحدث إصدار ✓', available: `يتوفر الإصدار ${U.version}`, downloading: `جاري تحميل ${U.version}… ${U.progress}%`, ready: `الإصدار ${U.version} جاهز للتثبيت`, error: 'تعذر التحقق من التحديثات' })[U.status] || (U.supported ? 'لم يتم التحقق بعد' : 'التحديث التلقائي يعمل في النسخة المثبتة على ويندوز')
+  b.textContent = U.status === 'available' ? 'تحميل وتثبيت التحديث' : U.status === 'ready' ? 'إعادة التشغيل والتحديث' : 'البحث عن تحديثات'
+  b.disabled = U.status === 'checking' || U.status === 'downloading' || !U.supported
+  b.onclick = async () => { if (U.status === 'available') await ibra.updateDownload(); else if (U.status === 'ready') await ibra.updateInstall(); else await ibra.updateCheck(); setTimeout(drawUpdateStatus, 300) }
+}
 PAGES.about = async () => {
   const a = await ibra.appInfo()
   app.innerHTML = shell('about', `<h1>حول IBRA CROM</h1>
     <div class="card about-hero"><img src="../assets/logo.png" alt=""><div><h3>IBRA CROM</h3><p>الإصدار ${esc(a.version)} — مبني على محرك Chromium ${esc(a.chrome)}</p><p class="by">برمجة و تطوير <b>ابراهيم الخزرجي</b></p><p><a href="https://t.me/ibraprogram">قناة IBRAPROGRAM على تيليجرام</a></p></div></div>
+    <h2>التحديثات</h2>
+    <div class="card"><div class="row"><div class="rt"><b id="ust">—</b><span>يتحقق IBRA CROM من وجود تحديثات تلقائياً كل 6 ساعات من صفحة الإصدارات</span></div><button class="btn primary" id="ubtn">البحث عن تحديثات</button></div></div>
     <h2>تفاصيل تقنية</h2>
     <div class="card kv"><div>Chromium</div><div>${esc(a.chrome)}</div><div>V8</div><div>${esc(a.v8)}</div><div>Electron</div><div>${esc(a.electron)}</div><div>User Agent</div><div>${esc(a.ua)}</div><div>مجلد البيانات</div><div>${esc(a.userData)}</div></div>
     <h2>الترخيص</h2>
     <div class="card"><div class="row"><div class="rt"><span>يعتمد دعم إضافات Chrome على مكتبة electron-chrome-extensions (GPL-3.0) ومحرك Chromium مفتوح المصدر (BSD). الخط: IBM Plex Sans Arabic (OFL).</span></div></div></div>`)
+  drawUpdateStatus()
 }
 
 // ═════════ خطأ ═════════

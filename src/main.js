@@ -14,6 +14,7 @@ const store = require('./store')
 const createAdblock = require('./features/adblock')
 const createShield = require('./features/shield')
 const createProxy = require('./features/proxy')
+const createUpdater = require('./features/updater')
 const { resolveIbdm, checkGithub, isIbdmExtension, newer: verNewer } = require('./features/ibdm-ext')
 
 app.setName('IBRA CROM')
@@ -82,7 +83,7 @@ const THEME_COLORS = {
 let ses = null
 let extensions = null
 let extProxy = null
-let adblock = null, shield = null, proxy = null
+let adblock = null, shield = null, proxy = null, updater = null
 let ibdmExt = { dir: '', version: '0', source: 'builtin' }
 const shieldPending = new Map() // webContentsId -> { url, kind }
 const extFor = (proxied) => (proxied && extProxy) || extensions
@@ -423,7 +424,7 @@ class IbraWindow {
       adblock: adblock ? (({ enabled, ready, total }) => ({ enabled, ready, total }))(adblock.info()) : {},
       shield: shield ? { enabled: shield.info().enabled, blocked: shield.info().stats.blocked } : {},
     }
-    return { tabs, activeId: this.activeId, nav, closed, features, ibdm: !!IBDM.cfg, settings, bookmarks: bookmarks.slice(0, 60), platform: process.platform, blur: HAS_BLUR, maximized: this.win.isMaximized() }
+    return { tabs, activeId: this.activeId, nav, closed, features, update: updater ? updater.info() : {}, ibdm: !!IBDM.cfg, settings, bookmarks: bookmarks.slice(0, 60), platform: process.platform, blur: HAS_BLUR, maximized: this.win.isMaximized() }
   }
 
   sendState() {
@@ -993,6 +994,9 @@ function setupIpc() {
   ipcMain.on('tab:reopen', (e, index) => { const w = W(e); if (w) reopenClosed(w, index | 0) })
   ipcMain.on('tab:reopen-all', (e) => { const w = W(e); if (!w) return; while (closedTabs.length) reopenClosed(w, 0) })
   ipcMain.on('ibdm:show', () => ibdmReq('POST', '/show', {}))
+  ipcMain.on('update:check', () => updater.check())
+  ipcMain.on('update:download', () => updater.download())
+  ipcMain.on('update:install', () => updater.install())
   ipcMain.on('proxy:toggle', (e, id) => { const w = W(e); const t = id ? w?.tabs.find(x => x.id === id) : w?.active(); if (t) w.setTabProxy(t.id, !t.proxied) })
   ipcMain.on('proxy:newtab', (e) => { const w = W(e); if (w) { w.newTab('ibra://newtab', true, { proxied: true }); focusAddress(w) } })
   ipcMain.on('proxy:retry', () => proxy.restart())
@@ -1173,6 +1177,10 @@ function setupIpc() {
   })
   handle('proxyRetry', () => proxy.restart())
   handle('proxyCancelTab', (w, e) => { const t = w?.byWc(e.sender); if (t) w.setTabProxy(t.id, false) })
+  handle('updateInfo', () => updater.info())
+  handle('updateCheck', () => { updater.check(); return true })
+  handle('updateDownload', () => { updater.download(); return true })
+  handle('updateInstall', () => { updater.install(); return true })
   handle('navigate', (w, e, url) => { e.sender.loadURL(toLoadable(url)).catch(() => {}) })
   handle('openTab', (w, e, url, bg) => w?.newTab(url, !bg, { afterActive: true }))
   handle('openStore', (w) => w?.newTab('https://chromewebstore.google.com/'))
@@ -1194,6 +1202,7 @@ function menuAction(w, a) {
     store: () => w.newTab('https://chromewebstore.google.com/'),
     settings: () => w.newTab('ibra://settings'),
     about: () => w.newTab('ibra://about'),
+    checkUpdate: () => { updater.check(); w.ui.webContents.send('update:open') },
     print: () => t?.wc.print(),
     find: () => w.ui.webContents.send('find:open'),
     savePage: () => t && savePage(w, t.wc),
@@ -1249,6 +1258,20 @@ function setupFeatures() {
     store, userData: app.getPath('userData'), vendorDir: VENDOR_DIR,
     settings: () => settings, setSettings, changed: featuresChanged,
   }
+  updater = createUpdater({
+    changed: featuresChanged,
+    beforeInstall: () => { saveSession(); proxy?.shutdown(); store.flush() },
+    notify: (version, ready) => {
+      const msg = ready ? `التحديث ${version} جاهز — أعد تشغيل IBRA CROM لتثبيته` : `يتوفر إصدار جديد من IBRA CROM: ${version}`
+      for (const w of windows) w.ui.webContents.send('toast', msg)
+      if (Notification.isSupported()) {
+        const n = new Notification({ title: 'IBRA CROM', body: msg + (ready ? '' : '\nاضغط زر «تحديث» في شريط الأدوات'), icon: path.join(__dirname, 'assets', 'logo.png') })
+        n.on('click', () => { const w = focusedWin(); if (w) { if (w.win.isMinimized()) w.win.restore(); w.win.focus(); w.ui.webContents.send('update:open') } })
+        n.show()
+      }
+    },
+  })
+  updater.init()
   proxy = createProxy(ctx)
   adblock = createAdblock(ctx)
   shield = createShield(ctx)

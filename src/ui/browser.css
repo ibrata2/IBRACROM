@@ -283,3 +283,18 @@ body.overlay-on #overlay { display: block; }
 .fp-links button:hover { background: var(--hover); }
 .fp-links button.primary { background: var(--red); border-color: transparent; color: #fff; }
 .fp-note { color: var(--muted); font-size: 11.5px; margin-top: 8px; line-height: 1.5; }
+
+/* ═════════ التحديث ═════════ */
+.updpill { height: 30px; padding: 0 12px 0 10px; margin: 0 4px; border: 0; border-radius: 15px; display: flex; align-items: center; gap: 6px; flex: none;
+  background: linear-gradient(180deg, #f0262f, #b40d14); color: #fff; font-size: 12.5px; font-weight: 600; box-shadow: 0 2px 10px rgba(229,20,30,.45); cursor: default; }
+.updpill svg { width: 15px; height: 15px; }
+.updpill:hover { filter: brightness(1.08); }
+.updpill.ready { background: linear-gradient(180deg, #22c55e, #15803d); box-shadow: 0 2px 10px rgba(34,197,94,.45); }
+.updpill.pulse { animation: updpulse 1.6s var(--ease) 3; }
+@keyframes updpulse { 50% { box-shadow: 0 0 0 6px rgba(229,20,30,.18), 0 2px 10px rgba(229,20,30,.45); } }
+.upd-notes { max-height: 170px; overflow: auto; white-space: pre-wrap; font-size: 12.5px; line-height: 1.6; color: var(--text); background: var(--hover); border-radius: 10px; padding: 10px 12px; margin: 6px 0 4px; }
+.upd-ver { display: flex; gap: 10px; margin: 4px 0 8px; }
+.upd-ver div { flex: 1; text-align: center; padding: 8px; border-radius: 10px; background: var(--hover); }
+.upd-ver b { display: block; font-size: 17px; font-variant-numeric: tabular-nums; }
+.upd-ver div.new b { color: var(--red); }
+.upd-ver span { font-size: 11px; color: var(--muted); }

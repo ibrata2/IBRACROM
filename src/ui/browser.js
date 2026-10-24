@@ -70,6 +70,7 @@ function render() {
   if ((act.getAttribute('partition') || '') !== part) { if (part) act.setAttribute('partition', part); else act.removeAttribute('partition') }
   if (n.tabId && act.getAttribute('tab') !== String(n.tabId)) act.setAttribute('tab', String(n.tabId))
   renderFeatures()
+  renderUpdate()
   renderBookmarks()
   renderClosed()
 }
@@ -218,7 +219,7 @@ function markSel() {
 }
 
 // ═════════ اللوحات ═════════
-const PANELS = ['suggest', 'menu', 'dlpanel', 'closedpanel', 'proxypanel', 'shieldpanel']
+const PANELS = ['suggest', 'menu', 'dlpanel', 'closedpanel', 'proxypanel', 'shieldpanel', 'updpanel']
 function anyOpen() { return PANELS.some(id => !$(id).hidden) }
 function syncOverlay() {
   const on = anyOpen()
@@ -270,6 +271,7 @@ function buildMenu() {
     item('taskManager', I.cpu, 'مدير المهام'),
     sep,
     item('settings', I.settings, 'الإعدادات'),
+    item('checkUpdate', I.update, S.update?.status === 'available' || S.update?.status === 'ready' ? `تحديث إلى ${esc(S.update.version)} متوفر` : 'البحث عن تحديثات'),
     item('about', I.info, 'حول IBRA CROM'),
     item('quit', I.exit, 'خروج'),
     `<div class="mfoot">IBRA CROM — برمجة و تطوير <b>ابراهيم الخزرجي</b></div>`,
@@ -466,6 +468,48 @@ function buildShieldPanel() {
 }
 $('proxybtn').onclick = () => { if (!$('proxypanel').hidden) return closePanels(); buildProxyPanel(); placePanel($('proxypanel'), 'proxybtn'); showPanel('proxypanel') }
 $('shieldbtn').onclick = () => { if (!$('shieldpanel').hidden) return closePanels(); buildShieldPanel(); placePanel($('shieldpanel'), 'shieldbtn'); showPanel('shieldpanel') }
+
+// ═════════ التحديث ═════════
+let lastUpdVer = ''
+function renderUpdate() {
+  const U = S.update || {}
+  const b = $('updbtn')
+  const show = ['available', 'downloading', 'ready'].includes(U.status)
+  b.hidden = !show
+  if (show) {
+    b.classList.toggle('ready', U.status === 'ready')
+    b.innerHTML = I.update + (U.status === 'ready' ? '<span>أعد التشغيل للتحديث</span>' : U.status === 'downloading' ? `<span>جاري التحديث ${U.progress || 0}%</span>` : '<span>تحديث</span>')
+    b.title = `IBRA CROM ${U.version} متوفر`
+    if (U.version && U.version !== lastUpdVer) { lastUpdVer = U.version; b.classList.remove('pulse'); void b.offsetWidth; b.classList.add('pulse') }
+  }
+  if (!$('updpanel').hidden) buildUpdPanel()
+}
+function buildUpdPanel() {
+  const U = S.update || {}
+  const p = $('updpanel')
+  const fmtS = (b) => b > 1048576 ? (b / 1048576).toFixed(1) + ' MB/ث' : Math.round((b || 0) / 1024) + ' KB/ث'
+  let body = ''
+  if (U.status === 'available') body = `<div class="fp-links"><button id="up-go" class="primary">تحميل وتثبيت التحديث</button><button id="up-later">لاحقاً</button></div>`
+  else if (U.status === 'downloading') body = `<div class="fp-status"><i></i><span>جاري تحميل التحديث… ${U.progress || 0}% — ${fmtS(U.speed)}</span></div><div class="fp-prog"><i style="width:${U.progress || 2}%"></i></div>`
+  else if (U.status === 'ready') body = `<div class="fp-status ready"><i></i><span>التحديث جاهز. ستُحفظ ألسنتك ويعاد فتحها بعد التحديث.</span></div><div class="fp-links"><button id="up-inst" class="primary">إعادة التشغيل والتحديث الآن</button><button id="up-later">عند الإغلاق</button></div>`
+  else if (U.status === 'checking') body = `<div class="fp-status"><i></i><span>جاري البحث عن تحديثات…</span></div>`
+  else if (U.status === 'latest') body = `<div class="fp-status ready"><i></i><span>أنت تستخدم أحدث إصدار.</span></div>`
+  else if (U.status === 'error') body = `<div class="fp-status error"><i></i><span>تعذر التحقق: ${esc(U.error || '')}</span></div><div class="fp-links"><button id="up-chk">إعادة المحاولة</button></div>`
+  else if (!U.supported) body = `<div class="fp-status off"><i></i><span>التحديث التلقائي يعمل في النسخة المثبتة على ويندوز.</span></div>`
+  else body = `<div class="fp-links"><button id="up-chk" class="primary">البحث عن تحديثات</button></div>`
+  const hasNew = ['available', 'downloading', 'ready'].includes(U.status)
+  p.innerHTML = `<div class="fp-h"><span class="fic">${I.update}</span><div><b>${hasNew ? 'يتوفر إصدار جديد' : 'تحديثات IBRA CROM'}</b><small>من صفحة إصدارات IBRA CROM على GitHub</small></div></div>
+    <div class="upd-ver"><div><b>${esc(U.current || '')}</b><span>الإصدار الحالي</span></div>${hasNew ? `<div class="new"><b>${esc(U.version)}</b><span>الإصدار الجديد</span></div>` : ''}</div>
+    ${hasNew && U.notes ? `<div class="upd-notes" dir="auto">${esc(U.notes)}</div>` : ''}${body}`
+  const on = (id, fn) => { const el = p.querySelector('#' + id); if (el) el.onclick = fn }
+  on('up-go', () => api.send('update:download'))
+  on('up-inst', () => api.send('update:install'))
+  on('up-chk', () => api.send('update:check'))
+  on('up-later', () => closePanels())
+}
+function openUpd() { buildUpdPanel(); const r = $('updbtn').hidden ? $('menubtn').getBoundingClientRect() : $('updbtn').getBoundingClientRect(); const p = $('updpanel'); p.style.top = (r.bottom + 6) + 'px'; p.style.left = Math.max(8, Math.min(r.left - 10, innerWidth - 345)) + 'px'; showPanel('updpanel') }
+$('updbtn').onclick = () => { if (!$('updpanel').hidden) return closePanels(); openUpd() }
+api.on('update:open', () => setTimeout(openUpd, 50))
 
 api.send('ui:ready')
 api.send('ui:height', frame.offsetHeight)

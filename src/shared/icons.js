@@ -55,6 +55,7 @@ window.ICONS = (() => {
     shieldCheck: s('<path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/>'),
     bug: s('<rect x="8" y="7" width="8" height="12" rx="4"/><path d="M12 7V5M9 4l1.5 2M15 4l-1.5 2M4 11h4M16 11h4M4 17l4-2M20 17l-4-2"/>'),
     ad: s('<rect x="3" y="5" width="18" height="14" rx="3"/><path d="M7 15l2.5-6 2.5 6M7.8 13h3.4"/><path d="M14.5 9v6h1.5a3 3 0 0 0 0-6z"/>'),
+    update: s('<path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>'),
     refresh: s('<path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/>'),
   }
 })()
