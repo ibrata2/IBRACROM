@@ -298,3 +298,38 @@ body.overlay-on #overlay { display: block; }
 .upd-ver b { display: block; font-size: 17px; font-variant-numeric: tabular-nums; }
 .upd-ver div.new b { color: var(--red); }
 .upd-ver span { font-size: 11px; color: var(--muted); }
+
+/* ═════════ IBRA Media — التحكم في الوسائط ═════════ */
+#mediabtn.playing { color: var(--red); }
+#mediabtn .eq { position: absolute; bottom: 5px; left: 6px; display: none; gap: 1.5px; align-items: flex-end; height: 8px; }
+#mediabtn.playing .eq { display: flex; }
+#mediabtn .eq b { width: 2px; background: var(--red); border-radius: 1px; animation: eq .9s ease-in-out infinite; }
+#mediabtn .eq b:nth-child(2) { animation-delay: -.3s } #mediabtn .eq b:nth-child(3) { animation-delay: -.6s }
+@keyframes eq { 0%,100% { height: 2px } 50% { height: 8px } }
+#mediapanel { width: 420px; padding: 8px; max-height: calc(100vh - 70px); overflow: auto; }
+.mcard { border-radius: 14px; padding: 14px; background: linear-gradient(135deg, rgba(229,20,30,.10), rgba(229,20,30,.03)); border: 1px solid var(--line); }
+.mcard + .mcard { margin-top: 8px; }
+[data-theme="dark"] .mcard { background: linear-gradient(135deg, rgba(255,43,53,.16), rgba(255,255,255,.03)); }
+.mtop { display: flex; gap: 14px; align-items: center; }
+.mart { width: 92px; height: 92px; border-radius: 10px; flex: none; background: #111 center/cover no-repeat; display: grid; place-items: center; color: #fff; box-shadow: 0 4px 14px rgba(0,0,0,.25); overflow: hidden; }
+.mart svg { width: 36px; height: 36px; opacity: .8; }
+.mmeta { flex: 1; min-width: 0; cursor: pointer; }
+.msite { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; margin-bottom: 6px; }
+.msite img { width: 15px; height: 15px; border-radius: 3px; }
+.mtitle { font-weight: 700; font-size: 14px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.martist { color: var(--muted); font-size: 12.5px; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mside { display: flex; flex-direction: column; align-items: center; gap: 8px; flex: none; }
+.mside .tools { display: flex; gap: 2px; }
+.mbtn { width: 32px; height: 32px; border: 0; border-radius: 50%; background: none; color: var(--icon); display: grid; place-items: center; padding: 0; }
+.mbtn:hover:not(:disabled) { background: var(--hover); }
+.mbtn:disabled { opacity: .3; }
+.mbtn.on { color: var(--red); background: rgba(229,20,30,.12); }
+.mplay { width: 52px; height: 52px; border: 0; border-radius: 50%; display: grid; place-items: center; color: #fff; background: linear-gradient(180deg, #f0262f, #b40d14); box-shadow: 0 4px 14px rgba(229,20,30,.4); padding: 0; }
+.mplay:hover { filter: brightness(1.08); }
+.mbar { display: flex; align-items: center; gap: 4px; margin-top: 12px; direction: ltr; }
+.mbar .mtime { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; min-width: 34px; text-align: center; }
+.mbar input[type=range] { flex: 1; -webkit-appearance: none; appearance: none; height: 4px; border-radius: 4px; background: linear-gradient(to right, var(--red) var(--p, 0%), var(--line-strong) var(--p, 0%)); outline: 0; }
+.mbar input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: var(--red); border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.35); }
+.mbar input[type=range]:disabled { opacity: .5; }
+.mempty { color: var(--muted); text-align: center; padding: 26px 10px; }
+.mfoot2 { display: flex; align-items: center; justify-content: space-between; padding: 10px 6px 2px; font-size: 12px; color: var(--muted); }

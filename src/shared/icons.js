@@ -56,6 +56,15 @@ window.ICONS = (() => {
     bug: s('<rect x="8" y="7" width="8" height="12" rx="4"/><path d="M12 7V5M9 4l1.5 2M15 4l-1.5 2M4 11h4M16 11h4M4 17l4-2M20 17l-4-2"/>'),
     ad: s('<rect x="3" y="5" width="18" height="14" rx="3"/><path d="M7 15l2.5-6 2.5 6M7.8 13h3.4"/><path d="M14.5 9v6h1.5a3 3 0 0 0 0-6z"/>'),
     update: s('<path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>'),
+    media: s('<path d="M3 6h11M3 11h11M3 16h7"/><path d="M17 4v11"/><circle cx="15" cy="17" r="2.6"/><path d="M17 4l4 1.5"/>'),
+    playFill: `<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/></svg>`,
+    pauseFill: `<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><rect x="6.5" y="5" width="4" height="14" rx="1.2"/><rect x="13.5" y="5" width="4" height="14" rx="1.2"/></svg>`,
+    prevTrack: s('<path d="M6 5v14"/><path d="M19 5l-10 7 10 7z" fill="currentColor"/>'),
+    nextTrack: s('<path d="M18 5v14"/><path d="M5 5l10 7-10 7z" fill="currentColor"/>'),
+    back10: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M4.5 3.5v3.2h3.2"/><text x="12" y="15.3" text-anchor="middle" font-size="7.2" font-family="Segoe UI,Arial" font-weight="700" fill="currentColor" stroke="none">10</text></svg>`,
+    fwd10: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 3.5v3.2h-3.2"/><text x="12" y="15.3" text-anchor="middle" font-size="7.2" font-family="Segoe UI,Arial" font-weight="700" fill="currentColor" stroke="none">10</text></svg>`,
+    pip: s('<rect x="3" y="5" width="18" height="14" rx="2"/><rect x="12" y="11" width="7" height="6" rx="1" fill="currentColor" stroke="none"/>'),
+    cc: s('<rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M10.5 10.3a2.2 2.2 0 1 0 0 3.4M17 10.3a2.2 2.2 0 1 0 0 3.4"/>'),
     refresh: s('<path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/>'),
   }
 })()

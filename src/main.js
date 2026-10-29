@@ -15,6 +15,7 @@ const createAdblock = require('./features/adblock')
 const createShield = require('./features/shield')
 const createProxy = require('./features/proxy')
 const createUpdater = require('./features/updater')
+const media = require('./features/media')()
 const { resolveIbdm, checkGithub, isIbdmExtension, newer: verNewer } = require('./features/ibdm-ext')
 
 app.setName('IBRA CROM')
@@ -260,7 +261,7 @@ class IbraWindow {
     wc.on('page-favicon-updated', (e, favs) => { tab.favicon = favs[0] || ''; upd() })
     wc.on('did-start-loading', () => { tab.loading = true; upd() })
     wc.on('did-stop-loading', () => { tab.loading = false; upd() })
-    wc.on('media-started-playing', () => { tab.audible = true; upd() })
+    wc.on('media-started-playing', () => { tab.audible = true; tab.media = true; upd() })
     wc.on('media-paused', () => { tab.audible = false; upd() })
     wc.on('did-start-navigation', (e) => {
       if (e.isMainFrame && !e.isSameDocument) {
@@ -268,6 +269,7 @@ class IbraWindow {
         if (!internalName(e.url)) tab.favicon = ''
         if (internalName(e.url) !== 'proxywait') tab.pendingUrl = ''
         adblock?.resetTab(wc.id)
+        if (tab.media) { tab.media = false; media.forget(wc.id) }
         tabMedia.delete(wc.id)
       }
     })
@@ -400,7 +402,7 @@ class IbraWindow {
       const d = displayUrl(t)
       return {
         id: t.id, title: t.title || d || 'جديد', favicon: t.favicon, loading: t.loading,
-        url: d, internal: !!internalName(url) && !['error', 'blocked', 'proxywait'].includes(internalName(url)), audible: t.audible, muted: t.wc.isAudioMuted(), proxied: !!t.proxied,
+        url: d, internal: !!internalName(url) && !['error', 'blocked', 'proxywait'].includes(internalName(url)), audible: t.audible, muted: t.wc.isAudioMuted(), proxied: !!t.proxied, media: !!t.media,
       }
     })
     const a = this.active()
@@ -994,6 +996,25 @@ function setupIpc() {
   ipcMain.on('tab:reopen', (e, index) => { const w = W(e); if (w) reopenClosed(w, index | 0) })
   ipcMain.on('tab:reopen-all', (e) => { const w = W(e); if (!w) return; while (closedTabs.length) reopenClosed(w, 0) })
   ipcMain.on('ibdm:show', () => ibdmReq('POST', '/show', {}))
+  // ── IBRA Media ──
+  ipcMain.handle('media:list', async () => {
+    const out = []
+    for (const w of windows) for (const t of w.tabs) {
+      if (!t.media || t.closing) continue
+      const i = await media.info(t.wc)
+      if (!i) { t.media = false; continue }
+      let site = ''; try { site = new URL(displayUrl(t)).hostname.replace(/^www\./, '') } catch {}
+      out.push({ ...i, id: t.wc.id, site, favicon: t.favicon || '', audible: t.audible, active: w.activeId === t.id && w.win.isFocused() })
+    }
+    for (const w of windows) w.sendState()
+    return out.sort((a, b) => (a.paused - b.paused))
+  })
+  ipcMain.on('media:act', (e, id, action, value) => {
+    for (const w of windows) { const t = w.tabs.find(x => x.wc.id === id); if (t) media.act(t.wc, action, value).then(() => setTimeout(() => w.sendState(), 150)) }
+  })
+  ipcMain.on('media:focus', (e, id) => {
+    for (const w of windows) { const t = w.tabs.find(x => x.wc.id === id); if (t) { w.activate(t.id); if (w.win.isMinimized()) w.win.restore(); w.win.focus() } }
+  })
   ipcMain.on('update:check', () => updater.check())
   ipcMain.on('update:download', () => updater.download())
   ipcMain.on('update:install', () => updater.install())

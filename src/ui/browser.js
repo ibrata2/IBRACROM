@@ -71,6 +71,7 @@ function render() {
   if (n.tabId && act.getAttribute('tab') !== String(n.tabId)) act.setAttribute('tab', String(n.tabId))
   renderFeatures()
   renderUpdate()
+  renderMediaBtn()
   renderBookmarks()
   renderClosed()
 }
@@ -219,7 +220,7 @@ function markSel() {
 }
 
 // ═════════ اللوحات ═════════
-const PANELS = ['suggest', 'menu', 'dlpanel', 'closedpanel', 'proxypanel', 'shieldpanel', 'updpanel']
+const PANELS = ['suggest', 'menu', 'dlpanel', 'closedpanel', 'proxypanel', 'shieldpanel', 'updpanel', 'mediapanel']
 function anyOpen() { return PANELS.some(id => !$(id).hidden) }
 function syncOverlay() {
   const on = anyOpen()
@@ -510,6 +511,87 @@ function buildUpdPanel() {
 function openUpd() { buildUpdPanel(); const r = $('updbtn').hidden ? $('menubtn').getBoundingClientRect() : $('updbtn').getBoundingClientRect(); const p = $('updpanel'); p.style.top = (r.bottom + 6) + 'px'; p.style.left = Math.max(8, Math.min(r.left - 10, innerWidth - 345)) + 'px'; showPanel('updpanel') }
 $('updbtn').onclick = () => { if (!$('updpanel').hidden) return closePanels(); openUpd() }
 api.on('update:open', () => setTimeout(openUpd, 50))
+
+// ═════════ IBRA Media — التحكم في الوسائط ═════════
+$('mediabtn').insertAdjacentHTML('afterbegin', I.media)
+function renderMediaBtn() {
+  const tabs = S.tabs || []
+  const any = tabs.some(t => t.media)
+  const b = $('mediabtn')
+  b.hidden = !any && $('mediapanel').hidden
+  b.classList.toggle('playing', tabs.some(t => t.media && t.audible))
+}
+const tfmt = (s) => { s = Math.max(0, Math.floor(s || 0)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60; return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(x).padStart(2, '0') }
+let mediaTimer = null, mediaDrag = false, mediaList = []
+async function refreshMedia() {
+  if ($('mediapanel').hidden) { clearInterval(mediaTimer); mediaTimer = null; return }
+  if (mediaDrag) return
+  try { mediaList = await api.invoke('media:list') } catch { mediaList = [] }
+  drawMedia()
+}
+function drawMedia() {
+  const p = $('mediapanel')
+  if (!mediaList.length) { p.innerHTML = `<div class="mempty">${I.media}<br>لا يوجد فيديو أو صوت يعمل الآن</div>`; return }
+  const keep = new Set()
+  for (const m of mediaList) {
+    keep.add(String(m.id))
+    let c = p.querySelector(`.mcard[data-id="${m.id}"]`)
+    if (!c) {
+      p.querySelector('.mempty')?.remove()
+      c = document.createElement('div'); c.className = 'mcard'; c.dataset.id = m.id
+      c.innerHTML = `<div class="mtop">
+          <div class="mart"></div>
+          <div class="mmeta" title="الانتقال إلى اللسان"><div class="msite"><img alt=""><span></span></div><div class="mtitle" dir="auto"></div><div class="martist" dir="auto"></div></div>
+          <div class="mside"><div class="tools"><button class="mbtn" data-a="cc" title="الترجمة (CC)">${I.cc}</button><button class="mbtn" data-a="pip" title="صورة داخل صورة">${I.pip}</button></div><button class="mplay" data-a="toggle"></button></div>
+        </div>
+        <div class="mbar">
+          <button class="mbtn" data-a="prev" title="السابق">${I.prevTrack}</button>
+          <button class="mbtn" data-a="back" title="رجوع 10 ثواني">${I.back10}</button>
+          <span class="mtime cur">0:00</span><input type="range" min="0" max="1000" value="0"><span class="mtime dur">0:00</span>
+          <button class="mbtn" data-a="fwd" title="تقدم 10 ثواني">${I.fwd10}</button>
+          <button class="mbtn" data-a="next" title="التالي">${I.nextTrack}</button>
+        </div>`
+      const id = m.id
+      c.querySelectorAll('[data-a]').forEach(btn => btn.addEventListener('click', () => {
+        const a = btn.dataset.a
+        api.send('media:act', id, a === 'back' ? 'seekby' : a === 'fwd' ? 'seekby' : a, a === 'back' ? -10 : a === 'fwd' ? 10 : undefined)
+        setTimeout(refreshMedia, 250)
+      }))
+      c.querySelector('.mmeta').addEventListener('click', () => { api.send('media:focus', id); closePanels() })
+      const r = c.querySelector('input[type=range]')
+      r.addEventListener('input', () => { mediaDrag = true; const cur = mediaList.find(x => x.id === id); if (cur) c.querySelector('.cur').textContent = tfmt(cur.d * r.value / 1000); r.style.setProperty('--p', (r.value / 10) + '%') })
+      r.addEventListener('change', () => { const cur = mediaList.find(x => x.id === id); if (cur && cur.d) api.send('media:act', id, 'seekto', cur.d * r.value / 1000); mediaDrag = false; setTimeout(refreshMedia, 250) })
+      p.appendChild(c)
+    }
+    const art = c.querySelector('.mart')
+    if (art.dataset.src !== (m.art || '')) { art.dataset.src = m.art || ''; art.style.backgroundImage = m.art ? `url("${m.art.replace(/"/g, '%22')}")` : ''; art.innerHTML = m.art ? '' : (m.video ? I.pip : I.media) }
+    const fav = c.querySelector('.msite img'); if (fav.getAttribute('src') !== (m.favicon || '')) { if (m.favicon) fav.src = m.favicon; else fav.removeAttribute('src') } fav.hidden = !m.favicon
+    c.querySelector('.msite span').textContent = m.site
+    c.querySelector('.mtitle').textContent = m.title
+    c.querySelector('.martist').textContent = m.artist
+    c.querySelector('.mplay').innerHTML = m.paused ? I.playFill : I.pauseFill
+    c.querySelector('.mplay').title = m.paused ? 'تشغيل' : 'إيقاف مؤقت'
+    const q = (a) => c.querySelector(`[data-a="${a}"]`)
+    q('prev').disabled = !m.prev && !m.d; q('next').disabled = !m.next
+    q('back').disabled = q('fwd').disabled = !m.d
+    q('pip').hidden = !m.pipOk; q('pip').classList.toggle('on', m.pip); q('pip').title = m.pip ? 'الخروج من صورة داخل صورة' : 'صورة داخل صورة'
+    q('cc').hidden = !m.ccOk; q('cc').classList.toggle('on', m.cc)
+    const r = c.querySelector('input[type=range]')
+    r.disabled = !m.d
+    if (!mediaDrag) { const v = m.d ? Math.round(1000 * m.t / m.d) : 0; r.value = v; r.style.setProperty('--p', (v / 10) + '%'); c.querySelector('.cur').textContent = tfmt(m.t) }
+    c.querySelector('.dur').textContent = m.d ? tfmt(m.d) : 'مباشر'
+  }
+  p.querySelectorAll('.mcard').forEach(c => { if (!keep.has(c.dataset.id)) c.remove() })
+}
+$('mediabtn').onclick = async () => {
+  if (!$('mediapanel').hidden) return closePanels()
+  const p = $('mediapanel'); p.innerHTML = '<div class="mempty">…</div>'
+  const r = $('mediabtn').getBoundingClientRect()
+  p.style.top = (r.bottom + 6) + 'px'; p.style.left = Math.max(8, Math.min(r.left - 20, innerWidth - 436)) + 'px'
+  showPanel('mediapanel')
+  await refreshMedia()
+  clearInterval(mediaTimer); mediaTimer = setInterval(refreshMedia, 1000)
+}
 
 api.send('ui:ready')
 api.send('ui:height', frame.offsetHeight)

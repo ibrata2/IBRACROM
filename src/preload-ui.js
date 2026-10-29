@@ -8,8 +8,8 @@ injectBrowserAction()
 const SEND = new Set(['ui:height', 'ui:overlay', 'ui:ready', 'tab:new', 'tab:close', 'tab:activate', 'tab:move', 'tab:mute', 'tab:menu',
   'nav:go', 'nav:back', 'nav:forward', 'nav:reload', 'nav:stop', 'nav:home', 'nav:zoom', 'bookmark:toggle', 'bookmark:open', 'bookmark:remove',
   'find:query', 'find:stop', 'menu:action', 'dl:action', 'window:menu-system', 'tab:reopen', 'tab:reopen-all', 'ibdm:show',
-  'proxy:toggle', 'proxy:newtab', 'proxy:retry', 'adblock:site', 'feature:set', 'update:check', 'update:download', 'update:install'])
-const INVOKE = new Set(['suggest', 'dl:list'])
+  'proxy:toggle', 'proxy:newtab', 'proxy:retry', 'adblock:site', 'feature:set', 'update:check', 'update:download', 'update:install', 'media:act', 'media:focus'])
+const INVOKE = new Set(['suggest', 'dl:list', 'media:list'])
 const ON = new Set(['state', 'focus-address', 'find:open', 'find:result', 'downloads', 'downloads:started', 'toast', 'update:open'])
 
 contextBridge.exposeInMainWorld('ibraUI', {
