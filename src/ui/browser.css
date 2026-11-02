@@ -430,3 +430,7 @@ html.incog { --win-bg: #202124; --toolbar-bg: #35363a; --tab-active: #35363a; --
 .qrimg img:first-child { width: 240px; height: 240px; image-rendering: pixelated; }
 .qrlogo { position: absolute; width: 44px; height: 44px; background: #fff; border-radius: 10px; padding: 4px; }
 .qru { width: 100%; margin: 10px 0; height: 30px; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--field-bg-focus); color: var(--text); padding: 0 8px; font: inherit; font-size: 12px; outline: 0; }
+
+/* ═════════ استعادة الجلسة ═════════ */
+#restorepanel .rs-al { display: flex; align-items: center; gap: 8px; margin: 2px 2px 12px; color: var(--muted); font-size: 12.5px; cursor: pointer; }
+#restorepanel .rs-al input { accent-color: var(--red); }

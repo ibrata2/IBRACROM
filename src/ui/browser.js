@@ -86,6 +86,7 @@ function render() {
   renderBookmarks()
   renderClosed()
   renderAI()
+  renderRestore()
 }
 
 // ═════════ العلامات ═════════
@@ -315,7 +316,7 @@ function markSel() {
 }
 
 // ═════════ اللوحات ═════════
-const PANELS = ['suggest', 'menu', 'submenu', 'dlpanel', 'closedpanel', 'proxypanel', 'shieldpanel', 'updpanel', 'mediapanel', 'pwpanel', 'grouppanel', 'qrpanel']
+const PANELS = ['suggest', 'menu', 'submenu', 'dlpanel', 'closedpanel', 'proxypanel', 'shieldpanel', 'updpanel', 'mediapanel', 'pwpanel', 'grouppanel', 'qrpanel', 'restorepanel']
 function anyOpen() { return PANELS.some(id => !$(id).hidden) || !!$('bmfolders').children.length }
 function syncOverlay() {
   const on = anyOpen()
@@ -408,6 +409,7 @@ function subItems(id) {
     case 'passwords': return [it('passwords', I.key, 'كلمات السر'), it('importPasswords', I.upload, 'استيراد كلمات السر من Chrome')]
     case 'history': return [
       it('history', I.history, 'السجل', 'Ctrl+H'),
+      ...(S.hasPrev ? [it('restoreSession', I.reopen, 'فتح ألسن الجلسة السابقة')] : []),
       '-', { head: 'أُغلقت مؤخراً' },
       ...(S.closed || []).slice(0, 8).map((c, i) => ({ a: 'reopenIndex', arg: i, iconHtml: fav(c.favicon, c.internal), label: c.title, key: i === 0 ? 'Ctrl+Shift+T' : '' })),
       ...((S.closed || []).length ? [] : [{ note: 'لا توجد ألسن مغلقة' }]),
@@ -648,6 +650,26 @@ function renderAI() {
     })
   }
 }
+
+// ═════════ استعادة ألسن الجلسة السابقة ═════════
+let restoreShown = false
+function renderRestore() {
+  const p = $('restorepanel')
+  if (!S.restoreOffer) { if (!p.hidden) { p.hidden = true; syncOverlay() } return }
+  if (restoreShown) return
+  restoreShown = true
+  p.innerHTML = `<div class="fp-h"><span class="fic">${I.reopen}</span><div><b>${T('استعادة الألسن السابقة؟')}</b><small>${T('أُغلق IBRA CROM وكان مفتوحاً فيه {} لسان').replace('{}', S.restoreOffer)}</small></div></div>
+    <label class="rs-al"><input type="checkbox" id="rs-al"> ${T('افتحها دائماً بدون سؤال')}</label>
+    <div class="fp-links"><button id="rs-y" class="primary">${T('استعادة')}</button><button id="rs-n">${T('لا شكراً')}</button></div>`
+  p.querySelector('#rs-y').onclick = () => { api.send('restore:yes', p.querySelector('#rs-al').checked); closePanels() }
+  p.querySelector('#rs-n').onclick = () => { api.send('restore:no', p.querySelector('#rs-al').checked); closePanels() }
+  const r = $('menubtn').getBoundingClientRect()
+  p.style.top = (r.bottom + 6) + 'px'
+  p.style.left = Math.max(8, Math.min(LANG === 'en' ? r.right - 330 : r.left, innerWidth - 338)) + 'px'
+  showPanel('restorepanel')
+}
+// إذا أغلق الرسالة بالنقر خارجها نعتبرها «لا» (وتبقى متاحة من قائمة السجل)
+new MutationObserver(() => { if (restoreShown && $('restorepanel').hidden && S.restoreOffer) api.send('restore:no', false) }).observe($('restorepanel'), { attributes: true, attributeFilter: ['hidden'] })
 
 // ═════════ رمز QR للصفحة ═════════
 api.on('qr:open', async () => {

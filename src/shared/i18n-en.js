@@ -670,7 +670,14 @@
  "كتم/تشغيل الصوت": "Mute/unmute",
  "ملء الشاشة (F11)": "Full screen (F11)",
  "نسخ اسم المستخدم": "Copy username",
- "نسخ كلمة السر": "Copy password"
+ "نسخ كلمة السر": "Copy password",
+ "استعادة الألسن السابقة؟": "Restore previous tabs?",
+ "أُغلق IBRA CROM وكان مفتوحاً فيه {} لسان": "IBRA CROM was closed with {} tabs open",
+ "افتحها دائماً بدون سؤال": "Always restore without asking",
+ "استعادة": "Restore",
+ "لا شكراً": "No thanks",
+ "فتح ألسن الجلسة السابقة": "Reopen tabs from last session",
+ "السؤال عن فتح الألسن السابقة": "Ask whether to reopen previous tabs"
 }
   if (typeof module !== 'undefined') module.exports = EN; else root.IBRA_EN = EN
 })(typeof window !== 'undefined' ? window : globalThis)

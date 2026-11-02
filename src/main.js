@@ -51,7 +51,7 @@ const DEFAULT_SETTINGS = {
   theme: 'glass', // glass | light | dark
   searchEngine: 'google',
   homepage: 'ibra://newtab',
-  startup: 'newtab', // newtab | restore | home
+  startup: 'ask', // ask | newtab | restore | home
   showBookmarksBar: true,
   showHomeButton: true,
   downloadsDir: '',
@@ -69,6 +69,23 @@ const DEFAULT_SETTINGS = {
   proxyCustom: { scheme: 'socks5', host: '', port: '', user: '', pass: '' },
 }
 let settings = Object.assign({}, DEFAULT_SETTINGS, store.load('settings', {}))
+// من 1.6.2: الافتراضي هو السؤال عن فتح ألسن الجلسة السابقة (مرة واحدة للمستخدمين القدامى)
+if (!settings.startupAskMigrated) { if (settings.startup === 'newtab') settings.startup = 'ask'; settings.startupAskMigrated = true; store.save('settings', settings) }
+let prevSession = null // ألسن آخر جلسة (للاستعادة من الرسالة أو من قائمة السجل)
+const isBlankUrl = (u) => !u || /^(about:blank|ibra:\/\/newtab)/.test(u) || /internal\.html#newtab$/.test(u) || /internal\.html$/.test(u)
+function restorePrev(w) {
+  if (!prevSession) return
+  const data = prevSession; prevSession = null
+  data.forEach((urls, i) => {
+    if (!urls.length) return
+    if (i === 0 && w && !w.win.isDestroyed()) {
+      const blanks = w.tabs.filter(t => isBlankUrl(t.wc.getURL()))
+      urls.forEach((u, k) => w.newTab(u, k === 0))
+      for (const t of blanks) if (w.tabs.length > 1) w.closeTab(t.id)
+    } else new IbraWindow({ urls })
+  })
+  broadcastState()
+}
 let bookmarks = store.load('bookmarks', [])
 let history = store.load('history', [])
 let downloadsList = store.load('downloads', [])
@@ -592,7 +609,7 @@ class IbraWindow {
     const groups = [...this.groups.values()].map(g => ({ ...g, count: this.tabs.filter(t => t.groupId === g.id).length }))
     const recent = []; for (let i = history.length - 1; i >= 0 && recent.length < 8; i--) if (!recent.some(r => r.url === history[i].url)) recent.push({ url: history[i].url, title: history[i].title })
     const ai = { open: this.ai.open, provider: this.ai.provider, width: Math.round(Math.min(this.ai.width, this.win.getContentSize()[0] * 0.55)), providers: Object.fromEntries(Object.entries(AI_PROVIDERS).map(([k, v]) => [k, v.name])) }
-    return { tabs, activeId: this.activeId, nav, closed: this.incognito ? [] : closed, features, groups, recent: this.incognito ? [] : recent, ai, incognito: this.incognito, chromeBar: bmMirror.bar(), lang: LANG(), update: updater ? updater.info() : {}, ibdm: !!IBDM.cfg, settings, bookmarks: bookmarks.slice(0, 60), platform: process.platform, blur: HAS_BLUR, maximized: this.win.isMaximized() }
+    return { tabs, activeId: this.activeId, nav, closed: this.incognito ? [] : closed, features, groups, recent: this.incognito ? [] : recent, ai, incognito: this.incognito, restoreOffer: this.incognito ? 0 : (this.restoreOffer && prevSession ? this.restoreOffer : 0), hasPrev: !!prevSession && !this.incognito, chromeBar: bmMirror.bar(), lang: LANG(), update: updater ? updater.info() : {}, ibdm: !!IBDM.cfg, settings, bookmarks: bookmarks.slice(0, 60), platform: process.platform, blur: HAS_BLUR, maximized: this.win.isMaximized() }
   }
 
   sendState() {
@@ -641,6 +658,8 @@ function saveSession() {
   if (!windows.size) return
   const s = []
   for (const w of windows) if (!w.incognito) s.push(w.tabs.map(t => internalName(t.wc.getURL()) === 'error' ? t.errorUrl : t.wc.getURL()).filter(Boolean))
+  // إذا ما فتحت شي جديد وما استعدت الجلسة السابقة، نحتفظ بها للمرة القادمة
+  if (prevSession && s.every(urls => urls.every(isBlankUrl))) { store.save('session', prevSession, 0); return }
   store.save('session', s, 0)
 }
 
@@ -1294,6 +1313,8 @@ function setupIpc() {
   ipcMain.on('menu:action', (e, a, arg) => menuAction(W(e), a, arg))
   ipcMain.on('feature:lang', (e, l) => { if (l === 'ar' || l === 'en') setSettings({ language: l }) })
   // مجموعات الألسن
+  ipcMain.on('restore:yes', (e, always) => { const w = W(e); if (always) setSettings({ startup: 'restore' }); if (w) w.restoreOffer = 0; restorePrev(w) })
+  ipcMain.on('restore:no', (e, never) => { const w = W(e); if (w) { w.restoreOffer = 0; w.sendState() } if (never) setSettings({ startup: 'newtab' }) })
   ipcMain.on('group:toggle', (e, gid) => { const w = W(e); const g = w?.groups.get(gid); if (g) w.setGroup(gid, { collapsed: !g.collapsed }) })
   ipcMain.on('group:set', (e, gid, patch) => W(e)?.setGroup(gid, patch || {}))
   ipcMain.on('group:ungroup', (e, gid) => W(e)?.ungroup(gid))
@@ -1525,6 +1546,7 @@ function menuAction(w, a, arg) {
     groupNew: () => { if (t) { const g = w.groupTabs([t.id]); w.ui.webContents.send('group:edit', g) } },
     groupFocus: () => { const g = w.groups.get(arg); if (g) { w.setGroup(arg, { collapsed: false }); const f = w.tabs.find(x => x.groupId === arg); if (f) w.activate(f.id) } },
     clearData: () => w.newTab('ibra://settings#clear'),
+    restoreSession: () => restorePrev(w),
     aiPanel: () => w.toggleAI(),
     lensPage: async () => {
       if (!t || !/^https?:/.test(cur)) return toast('افتح موقعاً أولاً ثم استخدم Google Lens')
@@ -1733,7 +1755,13 @@ app.whenReady().then(async () => {
   const appUrl = appUrlFromArgv(process.argv)
   if (appUrl) { openAppWindow(appUrl); if (process.env.IBRA_TEST_SHOT) require(process.env.IBRA_TEST_FILE || './test-shot')(windows, { setSettings, menuAction }); return }
   const sessionData = store.load('session', [])
-  if (settings.startup === 'restore' && sessionData.length && sessionData.some(s => s.length)) {
+  const hasPrev = sessionData.some(s => s.some(u => !isBlankUrl(u)))
+  if (hasPrev) prevSession = sessionData.map(s => s.filter(u => !isBlankUrl(u))).filter(s => s.length)
+  if (settings.startup === 'ask' && hasPrev) {
+    const w = new IbraWindow({ urls: argvUrls.length ? argvUrls : ['ibra://newtab'] })
+    w.restoreOffer = prevSession.reduce((n, s) => n + s.length, 0)
+  } else if (settings.startup === 'restore' && sessionData.length && sessionData.some(s => s.length)) {
+    prevSession = null
     sessionData.forEach((urls, i) => { if (urls.length) new IbraWindow({ urls: i === 0 ? urls.concat(argvUrls) : urls }) })
   } else if (settings.startup === 'home') new IbraWindow({ urls: argvUrls.length ? argvUrls : [homeUrl()] })
   else new IbraWindow({ urls: argvUrls.length ? argvUrls : ['ibra://newtab'] })

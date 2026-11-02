@@ -136,7 +136,7 @@ PAGES.settings = async () => {
     </div>
     <h2>عند بدء التشغيل</h2>
     <div class="card">
-      ${[['newtab', 'فتح صفحة علامة التبويب الجديدة'], ['restore', 'المتابعة من حيث توقفت'], ['home', 'فتح الصفحة الرئيسية']].map(([k, t]) => `<label class="check-row"><input type="radio" name="startup" value="${k}" ${s.startup === k ? 'checked' : ''}>${t}</label>`).join('')}
+      ${[['ask', 'السؤال عن فتح الألسن السابقة'], ['newtab', 'فتح صفحة علامة التبويب الجديدة'], ['restore', 'المتابعة من حيث توقفت'], ['home', 'فتح الصفحة الرئيسية']].map(([k, t]) => `<label class="check-row"><input type="radio" name="startup" value="${k}" ${s.startup === k ? 'checked' : ''}>${t}</label>`).join('')}
       <div class="row"><div class="rt"><b>الصفحة الرئيسية</b><span>اتركها ibra://newtab أو اكتب عنوان موقع</span></div><input type="text" id="homepage" dir="ltr" value="${esc(s.homepage)}"></div>
     </div>
     <h2>التنزيلات</h2>
