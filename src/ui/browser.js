@@ -76,6 +76,9 @@ function render() {
   const part = n.partition || ''
   if ((act.getAttribute('partition') || '') !== part) { if (part) act.setAttribute('partition', part); else act.removeAttribute('partition') }
   if (n.tabId && act.getAttribute('tab') !== String(n.tabId)) act.setAttribute('tab', String(n.tabId))
+  // نافذة الإضافة تنفتح باتجاه وسط الشاشة حتى ما تطلع برّا النافذة (الأزرار يمين في English ويسار بالعربي)
+  const al = act.getBoundingClientRect().left + 20 > innerWidth / 2 ? 'bottom left' : 'bottom right'
+  if (act.getAttribute('alignment') !== al) act.setAttribute('alignment', al)
   renderFeatures()
   renderUpdate()
   renderMediaBtn()
@@ -231,7 +234,7 @@ function sizeTabs() {
   const per = avail / Math.max(1, S.tabs.filter(t => !(t.groupId && (S.groups || []).find(g => g.id === t.groupId)?.collapsed)).length)
   for (const el of tabEls.values()) el.classList.toggle('narrow', per < 92)
 }
-window.addEventListener('resize', sizeTabs)
+window.addEventListener('resize', () => { sizeTabs(); const act = $('actions'); const al = act.getBoundingClientRect().left + 20 > innerWidth / 2 ? 'bottom left' : 'bottom right'; if (act.getAttribute('alignment') !== al) act.setAttribute('alignment', al) })
 $('newtab').onclick = () => api.send('tab:new')
 $('tabstrip').addEventListener('dblclick', (e) => { if (e.target.id === 'tabs' || e.target.classList.contains('drag-fill')) api.send('window:menu-system') })
 
