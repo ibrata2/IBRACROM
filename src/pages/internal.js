@@ -1,6 +1,10 @@
 // IBRA CROM — الصفحات الداخلية | برمجة و تطوير ابراهيم الخزرجي
 const I = window.ICONS
 const app = document.getElementById('app')
+const LANG = ibra.lang === 'en' ? 'en' : 'ar'
+IBRA_I18N.attach(LANG)
+const LOC = LANG === 'en' ? 'en-GB' : 'ar-IQ'
+const T = (x) => IBRA_I18N.tr(x, LANG)
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
 const fav = (url) => { try { return 'https://www.google.com/s2/favicons?sz=64&domain=' + new URL(url).hostname } catch { return '' } }
 const fmt = (b) => { if (!b && b !== 0) return ''; const u = ['B', 'KB', 'MB', 'GB']; let i = 0; while (b >= 1024 && i < 3) { b /= 1024; i++ } return b.toFixed(i ? 1 : 0) + ' ' + u[i] }
@@ -10,7 +14,7 @@ function toast(msg) { const t = h(`<div class="toast">${esc(msg)}</div>`); docum
 let CFG = { settings: { theme: 'glass' } }
 async function loadCfg() {
   CFG = await ibra.getSettings()
-  document.documentElement.dataset.theme = CFG.settings.theme
+  document.documentElement.dataset.theme = CFG.incognito ? 'dark' : CFG.settings.theme
   document.documentElement.classList.toggle('no-blur', !CFG.blur)
 }
 
@@ -21,6 +25,7 @@ const NAV = [
   ['bookmarks', 'الإشارات المرجعية', 'bookmark'],
   ['extensions', 'الإضافات', 'puzzle'],
   ['passwords', 'كلمات السر', 'key'],
+  ['tasks', 'مدير المهام', 'cpu'],
   ['about', 'حول IBRA CROM', 'info'],
 ]
 function shell(active, inner) {
@@ -42,7 +47,7 @@ async function render() {
   document.title = TITLES[r] || 'IBRA CROM'
   await fn()
 }
-const TITLES = { newtab: 'علامة تبويب جديدة', settings: 'الإعدادات', history: 'السجل', downloads: 'التنزيلات', bookmarks: 'الإشارات المرجعية', extensions: 'الإضافات', about: 'حول IBRA CROM', error: 'تعذر الوصول', blocked: 'موقع خطير!', passwords: 'كلمات السر', proxywait: 'جاري الاتصال بالبروكسي…' }
+const TITLES = { newtab: 'علامة تبويب جديدة', settings: 'الإعدادات', history: 'السجل', downloads: 'التنزيلات', bookmarks: 'الإشارات المرجعية', extensions: 'الإضافات', about: 'حول IBRA CROM', error: 'تعذر الوصول', blocked: 'موقع خطير!', passwords: 'كلمات السر', tasks: 'مدير المهام', lens: 'Google Lens', proxywait: 'جاري الاتصال بالبروكسي…' }
 window.addEventListener('hashchange', render)
 ibra.onChanged(async (what) => {
   if (what === 'settings') { await loadCfg(); if (route() === 'settings' || route() === 'newtab') render() }
@@ -52,6 +57,7 @@ ibra.onChanged(async (what) => {
   if ((what === 'features' || what === 'settings') && route() === 'settings') refreshProxyStatus()
   if (what === 'passwords' && route() === 'passwords') render()
   if (what === 'bookmarks' && (route() === 'bookmarks' || route() === 'newtab')) render()
+  if (what === 'features' && route() === 'bookmarks') drawMirror()
 })
 
 const PAGES = {}
@@ -71,6 +77,19 @@ PAGES.newtab = async () => {
     for (const [u, t] of [['https://www.google.com/', 'Google'], ['https://www.youtube.com/', 'YouTube'], ['https://www.facebook.com/', 'Facebook'], ['https://www.instagram.com/', 'Instagram'], ['https://web.whatsapp.com/', 'WhatsApp'], ['https://chromewebstore.google.com/', 'سوق Chrome'], ['https://t.me/ibraprogram', 'IBRAPROGRAM']]) {
       tiles.push({ url: u, title: t, host: new URL(u).hostname })
     }
+  }
+  if (CFG.incognito) {
+    app.innerHTML = `<div class="ntp incog-ntp">
+      <div class="inc-ic">${I.incognito}</div>
+      <h1>أنت في وضع التصفح المتخفي</h1>
+      <p>الآخرون الذين يستخدمون هذا الجهاز لن يروا نشاطك. التنزيلات والإشارات المرجعية ستُحفظ.</p>
+      <div class="inc-cols"><div><b>IBRA CROM لن يحفظ:</b><ul><li>سجل التصفح</li><li>ملفات تعريف الارتباط وبيانات المواقع</li><li>المعلومات المُدخلة في النماذج</li></ul></div>
+      <div><b>قد يبقى نشاطك ظاهراً لـ:</b><ul><li>المواقع التي تزورها</li><li>جهة عملك أو مدرستك</li><li>مزوّد خدمة الإنترنت</li></ul></div></div>
+      <form id="sf"><span class="sico">${I.search}</span><input class="sbox" id="q" autocomplete="off" placeholder="ابحث في ${esc(eng)} أو اكتب عنوان URL" autofocus></form>
+    </div>`
+    app.querySelector('#sf').addEventListener('submit', (e) => { e.preventDefault(); const v = app.querySelector('#q').value.trim(); if (v) ibra.navigate(v) })
+    setTimeout(() => app.querySelector('#q')?.focus(), 50)
+    return
   }
   app.innerHTML = `<div class="ntp">
     <div class="mark"><img src="../assets/logo.png" alt=""><div class="wm">IBRA <span>CROM</span><small>برمجة و تطوير ابراهيم الخزرجي</small></div></div>
@@ -97,6 +116,11 @@ PAGES.settings = async () => {
   const sw = (key, label, sub = '') => `<div class="row"><div class="rt"><b>${label}</b>${sub ? `<span>${sub}</span>` : ''}</div><label class="switch"><input type="checkbox" data-k="${key}" ${s[key] ? 'checked' : ''}><i></i></label></div>`
   app.innerHTML = shell('settings', `
     <h1>الإعدادات</h1>
+    <h2>اللغة · Language</h2>
+    <div class="card">
+      <div class="row"><div class="rt"><b>لغة المتصفح</b><span>تتغير كل القوائم والصفحات فوراً</span></div>
+        <select id="lang"><option value="auto" ${(s.language || 'auto') === 'auto' ? 'selected' : ''}>تلقائي (لغة ويندوز)</option><option value="ar" ${s.language === 'ar' ? 'selected' : ''}>العربية</option><option value="en" ${s.language === 'en' ? 'selected' : ''}>English</option></select></div>
+    </div>
     <h2>المظهر</h2>
     <div class="card">
       <div class="themes">
@@ -132,20 +156,23 @@ PAGES.settings = async () => {
     <div class="card">
       <div class="row"><div class="ric"><img src="../assets/logo64.png" alt=""></div><div class="rt"><b>اجعل IBRA CROM متصفحك الافتراضي</b><span>ستفتح إعدادات ويندوز، اختر IBRA CROM لروابط HTTP و HTTPS</span></div><button class="btn primary" id="defb">تعيين كافتراضي</button></div>
     </div>
-    <h2>الخصوصية والأمان</h2>
-    <div class="card">
+    <h2 id="clearh">الخصوصية والأمان — حذف بيانات التصفح</h2>
+    <div class="card" id="clearcard">
+      <div class="row"><div class="rt"><b>النطاق الزمني</b></div>
+        <select id="c_range"><option value="3600000">آخر ساعة</option><option value="86400000">آخر 24 ساعة</option><option value="604800000">آخر 7 أيام</option><option value="2419200000">آخر 4 أسابيع</option><option value="0" selected>كل الأوقات</option></select></div>
       <div class="check-row"><input type="checkbox" id="c_history" checked>سجل التصفح</div>
       <div class="check-row"><input type="checkbox" id="c_cookies">ملفات تعريف الارتباط وبيانات المواقع (سيتم تسجيل خروجك)</div>
       <div class="check-row"><input type="checkbox" id="c_cache" checked>الصور والملفات المخزنة مؤقتاً</div>
       <div class="check-row"><input type="checkbox" id="c_downloads">قائمة التنزيلات</div>
       <div class="check-row"><input type="checkbox" id="c_permissions">أذونات المواقع (الكاميرا، الموقع، الإشعارات)</div>
-      <div class="row"><div class="rt"></div><button class="btn danger" id="clear">${I.trash} محو بيانات التصفح</button></div>
+      <div class="row"><div class="rt"><span>كلمات السر المحفوظة لا تُحذف من هنا — أدرها من صفحة كلمات السر</span></div><button class="btn danger" id="clear">${I.trash} محو بيانات التصفح</button></div>
     </div>
     <h2>متقدم</h2>
     <div class="card">
       <div class="row click" id="ud"><div class="rt"><b>فتح مجلد بيانات المتصفح</b><span>الإعدادات والإضافات والسجل</span></div>${I.folder}</div>
       <div class="row"><div class="rt"><b>إعادة الإعدادات إلى الوضع الافتراضي</b></div><button class="btn" id="reset">إعادة تعيين</button></div>
     </div>`)
+  app.querySelector('#lang').addEventListener('change', (e) => ibra.setSettings({ language: e.target.value }))
   app.querySelectorAll('[data-theme-opt]').forEach(b => b.addEventListener('click', () => ibra.setSettings({ theme: b.dataset.themeOpt })))
   app.querySelectorAll('input[data-k]').forEach(c => c.addEventListener('change', () => ibra.setSettings({ [c.dataset.k]: c.checked })))
   app.querySelector('#engine').addEventListener('change', (e) => ibra.setSettings({ searchEngine: e.target.value }))
@@ -160,9 +187,10 @@ PAGES.settings = async () => {
   app.querySelector('#ud').addEventListener('click', () => ibra.openPath('userData'))
   app.querySelector('#reset').addEventListener('click', async () => { if (confirm('إعادة كل الإعدادات إلى الوضع الافتراضي؟')) { await ibra.resetSettings(); toast('تمت إعادة التعيين') } })
   app.querySelector('#clear').addEventListener('click', async () => {
-    const o = {}; for (const k of ['history', 'cookies', 'cache', 'downloads', 'permissions']) o[k] = app.querySelector('#c_' + k).checked
-    await ibra.clearData(o); toast('تم محو البيانات المحددة')
+    const o = { range: +app.querySelector('#c_range').value }; for (const k of ['history', 'cookies', 'cache', 'downloads', 'permissions']) o[k] = app.querySelector('#c_' + k).checked
+    await ibra.clearData(o); toast(T('تم محو البيانات المحددة'))
   })
+  if (/[#|]clear/.test(location.hash)) { const c = app.querySelector('#clearcard'); app.querySelector('#clearh').scrollIntoView({ block: 'start' }); c.classList.add('flash'); setTimeout(() => c.classList.remove('flash'), 1800) }
 }
 
 // ═════════ السجل ═════════
@@ -178,12 +206,12 @@ PAGES.history = async (q = '') => {
     const today = new Date().toDateString(), yest = new Date(Date.now() - 864e5).toDateString()
     for (const it of list) {
       const d = new Date(it.time); const k = d.toDateString()
-      const label = k === today ? 'اليوم' : k === yest ? 'أمس' : d.toLocaleDateString('ar-IQ', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
+      const label = k === today ? 'اليوم' : k === yest ? 'أمس' : d.toLocaleDateString(LOC, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
       if (!groups.has(label)) groups.set(label, []); groups.get(label).push(it)
     }
     box.innerHTML = [...groups].map(([g, items]) => `<div class="group-title">${esc(g)}</div>` + items.map(it => {
       let host = ''; try { host = new URL(it.url).hostname } catch {}
-      return `<div class="hrow"><input type="checkbox" data-id="${it.id}"><span class="tm">${new Date(it.time).toLocaleTimeString('ar-IQ', { hour: '2-digit', minute: '2-digit' })}</span><img src="${esc(fav(it.url))}" alt=""><div class="ht"><a href="${esc(it.url)}" dir="auto">${esc(it.title || it.url)}</a><small>${esc(host)}</small></div><button class="ibtn" data-del="${it.id}" title="إزالة">${I.close}</button></div>`
+      return `<div class="hrow"><input type="checkbox" data-id="${it.id}"><span class="tm">${new Date(it.time).toLocaleTimeString(LOC, { hour: '2-digit', minute: '2-digit' })}</span><img src="${esc(fav(it.url))}" alt=""><div class="ht"><a href="${esc(it.url)}" dir="auto">${esc(it.title || it.url)}</a><small>${esc(host)}</small></div><button class="ibtn" data-del="${it.id}" title="إزالة">${I.close}</button></div>`
     }).join('')).join('')
     box.querySelectorAll('img').forEach(i => i.addEventListener('error', () => { i.replaceWith(h(`<span class="gl">${I.globe}</span>`)) }))
   }
@@ -228,7 +256,7 @@ function drawDownloads() {
     return `<div class="dl" data-id="${esc(d.id)}"><span class="dic">${d.state === 'completed' ? I.file : I.download}</span>
       <div class="dm"><div class="dn ${d.state === 'cancelled' ? 'gone' : ''}" dir="auto">${esc(d.filename)}</div><div class="du">${esc(d.url)}</div>
       ${d.state === 'progressing' ? `<div class="bar"><i style="width:${pct}%"></i></div>` : ''}
-      <div class="ds">${st} · ${new Date(d.start).toLocaleString('ar-IQ')}</div><div class="links">${links}</div></div>
+      <div class="ds">${st} · ${new Date(d.start).toLocaleString(LOC)}</div><div class="links">${links}</div></div>
       <button class="ibtn" data-a="remove" title="إزالة من القائمة">${I.close}</button></div>`
   }).join('')
   box.querySelectorAll('[data-a]').forEach(a => a.addEventListener('click', () => ibra.downloadAction(a.closest('.dl').dataset.id, a.dataset.a)))
@@ -239,7 +267,11 @@ PAGES.bookmarks = async () => {
   const list = await ibra.bookmarks()
   app.innerHTML = shell('bookmarks', `<h1>الإشارات المرجعية</h1>
     <div class="toolbar"><input type="search" id="bq" placeholder="ابحث في الإشارات"><button class="btn primary" id="badd">${I.plus} إضافة</button><button class="btn" id="bimp">${I.upload} استيراد من جوجل كروم / Edge</button></div>
+    <h2>${I.google} إشارات حسابك في Google Chrome</h2>
+    <div class="card" id="bmm"></div>
+    <h2>إشارات IBRA CROM</h2>
     <div class="card" id="bl"></div>`)
+  drawMirror()
   const draw = () => {
     const q = app.querySelector('#bq').value.toLowerCase()
     const items = list.filter(b => !q || (b.title + b.url).toLowerCase().includes(q))
@@ -265,6 +297,43 @@ PAGES.bookmarks = async () => {
     const nl = await ibra.bookmarks(); list.splice(0, list.length, ...nl); draw()
   })
 }
+// ── مرآة إشارات حساب Chrome ──
+async function drawMirror() {
+  const box = app.querySelector('#bmm'); if (!box) return
+  const M = await ibra.bmMirror()
+  const A = M.active
+  const opts = [['', 'تلقائي (حساب Chrome الأخير)'], ...M.profiles.map(p => [p.key, p.label]), ['html', 'ملف إشارات مستورد (HTML)']]
+  box.innerHTML = `
+    <div class="row"><div class="ric gic">${I.google}</div><div class="rt"><b>عرض إشارات حسابك في Chrome تحت شريط العنوان</b>
+      <span>${A ? esc(A.label) + ' — ' + A.count + ' ' + T('إشارة') + ' · ' + T('تتحدث تلقائياً') : M.enabled === false ? T('متوقف') : T('لم يتم العثور على Google Chrome على هذا الجهاز')}</span></div>
+      <label class="switch"><input type="checkbox" id="mm_on" ${M.enabled !== false ? 'checked' : ''}><i></i></label></div>
+    <div class="row"><div class="rt"><b>المصدر</b><span>اختر حساب Chrome (الإيميل) الذي تريد إشاراته</span></div>
+      <select id="mm_src">${opts.map(([k, t]) => `<option value="${esc(k)}" ${(M.profile || '') === k ? 'selected' : ''}>${esc(T(t))}</option>`).join('')}</select></div>
+    <div class="row"><div class="rt"><b>لا يوجد Chrome على هذا الجهاز؟</b><span>صدّر إشاراتك من Chrome (الإشارات ← تصدير) أو من Google Takeout، ثم استوردها هنا بنفس الترتيب والمجلدات</span></div>
+      <button class="btn" id="mm_imp">${I.upload} استيراد ملف HTML</button></div>
+    <div class="note-g">Google لا تسمح للمتصفحات غير Chrome باستخدام مزامنة الحساب مباشرة، لذلك يقرأ IBRA CROM إشارات حسابك من Chrome المثبت على جهازك (Chrome يبقيها متزامنة مع حسابك)، ويعرضها بنفس الترتيب والمجلدات ويحدّثها تلقائياً.</div>
+    ${A ? '<div class="tree" id="mm_tree"></div>' : ''}`
+  box.querySelector('#mm_on').addEventListener('change', async (e) => { await ibra.bmMirrorSet({ enabled: e.target.checked }); drawMirror() })
+  box.querySelector('#mm_src').addEventListener('change', async (e) => { await ibra.bmMirrorSet({ profile: e.target.value, enabled: true }); drawMirror() })
+  box.querySelector('#mm_imp').addEventListener('click', async () => {
+    const r = await ibra.bmImportHtml(); if (!r) return
+    toast(r.ok ? T('تم استيراد') + ' ' + r.total + ' ' + T('إشارة') : T('لم يتم العثور على إشارات في هذا الملف')); drawMirror()
+  })
+  const tree = box.querySelector('#mm_tree')
+  if (tree) await drawTree(tree, [], 0)
+}
+async function drawTree(el, p, depth) {
+  const list = await ibra.bmMirrorTree(p)
+  el.innerHTML = list.map((x, i) => x.t === 'u'
+    ? `<div class="tn u" style="--d:${depth}"><img src="${esc(fav(x.u))}" alt=""><a href="${esc(x.u)}" dir="auto">${esc(x.n || x.u)}</a><small dir="ltr">${esc(x.u)}</small></div>`
+    : `<div class="tn f" style="--d:${depth}" data-i="${i}"><span class="tw">${I.chevron}</span>${I.folder}<b dir="auto">${esc(depth === 0 && p.length === 0 && i >= list.length - 2 && /^(إشارات أخرى|إشارات الجوال)$/.test(x.n) ? T(x.n) : x.n)}</b><small>${x.count}</small></div><div class="tc" hidden></div>`).join('')
+  el.querySelectorAll('img').forEach(i => i.addEventListener('error', () => i.replaceWith(h(`<span class="gl">${I.globe}</span>`))))
+  el.querySelectorAll(':scope > .tn.f').forEach(f => f.addEventListener('click', async () => {
+    const c = f.nextElementSibling, x = list[+f.dataset.i]
+    if (c.hidden) { await drawTree(c, x.p, depth + 1); c.hidden = false; f.classList.add('open') } else { c.hidden = true; f.classList.remove('open') }
+  }))
+}
+
 function editBookmark(b, done) {
   const m = h(`<div class="modal-bg"><div class="modal"><h3>${b.id ? 'تعديل الإشارة' : 'إضافة إشارة مرجعية'}</h3>
     <label>الاسم</label><input type="text" id="mt" value="${esc(b.title)}"><label>العنوان</label><input type="url" id="mu" dir="ltr" value="${esc(b.url)}">
@@ -282,7 +351,7 @@ function editBookmark(b, done) {
 
 // ═════════ الإضافات ═════════
 const fmtN = (n) => (n || 0).toLocaleString('en-US')
-const when = (t) => t ? new Date(t).toLocaleString('ar-IQ', { dateStyle: 'medium', timeStyle: 'short' }) : 'لم تُحمّل بعد'
+const when = (t) => t ? new Date(t).toLocaleString(LOC, { dateStyle: 'medium', timeStyle: 'short' }) : 'لم تُحمّل بعد'
 function builtinCards(F) {
   const P = F.proxy, A = F.adblock, Sh = F.shield
   const swb = (k, on) => `<label class="switch"><input type="checkbox" data-f="${k}" ${on ? 'checked' : ''}><i></i></label>`
@@ -450,6 +519,48 @@ async function refreshProxyStatus() {
 }
 
 // ═════════ موقع خطير ═════════
+// ═════════ مدير المهام ═════════
+let tasksT = null
+PAGES.tasks = async () => {
+  app.innerHTML = shell('tasks', `<h1>مدير المهام</h1>
+    <div class="toolbar"><span class="muted">${T('الذاكرة والمعالج لكل لسان وعملية — يتحدث كل ثانيتين')}</span><span style="flex:1"></span><button class="btn danger" id="tkill" disabled>${I.close} إنهاء العملية</button></div>
+    <div class="card"><table class="tasks"><thead><tr><th>المهمة</th><th>الذاكرة</th><th>المعالج</th><th>رقم العملية</th></tr></thead><tbody id="tb"></tbody></table></div>`)
+  let sel = 0
+  const KIND = { tab: '', proxy: 'بروكسي', incognito: 'متخفٍّ', Browser: 'المتصفح', GPU: 'GPU', Utility: 'خدمة', Tab: 'خلفية' }
+  const draw = async () => {
+    if (route() !== 'tasks') { clearInterval(tasksT); return }
+    const rows = await ibra.tasks()
+    const tb = app.querySelector('#tb'); if (!tb) return
+    tb.innerHTML = rows.map(r => `<tr data-id="${r.id}" class="${r.id && r.id === sel ? 'sel' : ''} ${r.id ? '' : 'sys'}">
+      <td><div class="tt">${r.internal ? '<img src="../assets/logo64.png" alt="">' : r.favicon ? `<img src="${esc(r.favicon)}" alt="">` : `<span class="gl">${r.id ? I.globe : I.cpu}</span>`}<span dir="auto">${esc(T(r.title))}</span>${KIND[r.kind] ? `<i class="tk">${esc(T(KIND[r.kind]))}</i>` : ''}</div></td>
+      <td>${fmt(r.mem * 1024)}</td><td>${(r.cpu || 0).toFixed(1)}</td><td>${r.pid}</td></tr>`).join('')
+    tb.querySelectorAll('img').forEach(i => i.addEventListener('error', () => i.replaceWith(h(`<span class="gl">${I.globe}</span>`))))
+    tb.querySelectorAll('tr[data-id]').forEach(tr => tr.addEventListener('click', () => { const id = +tr.dataset.id; if (!id) return; sel = id; tb.querySelectorAll('tr').forEach(x => x.classList.toggle('sel', x === tr)); app.querySelector('#tkill').disabled = false }))
+    app.querySelector('#tkill').disabled = !rows.some(r => r.id && r.id === sel)
+  }
+  app.querySelector('#tkill').addEventListener('click', async () => { if (sel && await ibra.taskKill(sel)) { toast(T('تم إنهاء العملية')); sel = 0; draw() } })
+  clearInterval(tasksT); tasksT = setInterval(draw, 2000)
+  await draw()
+}
+
+// ═════════ Google Lens (البحث بصورة اللسان) ═════════
+PAGES.lens = async () => {
+  const img = await ibra.lensImage()
+  app.innerHTML = `<div class="lens"><div class="lens-card"><div class="lens-h">${I.lens}<b>Google Lens</b></div>
+    ${img ? `<img class="shot" alt=""><div class="lens-s"><div class="spin"></div>${T('جاري إرسال الصورة إلى Google Lens…')}</div>` : `<div class="empty">${T('لا توجد صورة — استخدم «البحث في هذا اللسان باستخدام Google Lens» من القائمة')}</div>`}</div></div>`
+  if (!img) return
+  app.querySelector('.shot').src = img
+  const bin = atob(img.split(',')[1]); const bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+  const blob = new Blob([bytes], { type: 'image/png' })
+  const form = document.createElement('form')
+  form.method = 'POST'; form.enctype = 'multipart/form-data'
+  form.action = 'https://lens.google.com/v3/upload?ep=ccm&s=&st=' + Date.now() + '&hl=' + LANG
+  const inp = document.createElement('input'); inp.type = 'file'; inp.name = 'encoded_image'
+  const dt = new DataTransfer(); dt.items.add(new File([blob], 'ibra-crom.png', { type: 'image/png' })); inp.files = dt.files
+  form.appendChild(inp); form.hidden = true; document.body.appendChild(form)
+  setTimeout(() => form.submit(), 400)
+}
+
 PAGES.blocked = async () => {
   const [, kind, url] = location.hash.slice(1).split('|').map(x => decodeURIComponent(x || ''))
   let host = url; try { host = new URL(url).hostname } catch {}

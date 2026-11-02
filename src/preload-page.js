@@ -121,9 +121,11 @@ if (location.protocol === 'file:' && /\/pages\/internal\.html$/.test(decodeURICo
     'openExtensionOptions', 'updateExtensions', 'chooseDownloadsDir', 'clearData', 'setDefaultBrowser', 'topSites', 'navigate', 'openTab',
     'openStore', 'appInfo', 'openPath', 'ibdmShow', 'ibdmCheck',
     'features', 'setFeature', 'adblockRefresh', 'adblockAllowRemove', 'shieldRefresh', 'shieldProceed', 'setProxySettings', 'proxyRetry', 'proxyCancelTab', 'updateInfo', 'updateCheck', 'updateDownload', 'updateInstall',
-    'pwList', 'pwReveal', 'pwRemove', 'pwEdit', 'pwAdd', 'pwRemoveNever', 'pwImport', 'pwImportFile', 'pwExport', 'openChromePasswords']
+    'pwList', 'pwReveal', 'pwRemove', 'pwEdit', 'pwAdd', 'pwRemoveNever', 'pwImport', 'pwImportFile', 'pwExport', 'openChromePasswords',
+    'tasks', 'taskKill', 'lensImage', 'bmMirror', 'bmMirrorSet', 'bmMirrorTree', 'bmImportHtml']
   const api = {}
   for (const n of names) api[n] = call(n)
+  api.lang = ipcRenderer.sendSync('page:lang')
   api.onChanged = (cb) => ipcRenderer.on('page:changed', (e, what) => cb(what))
   api.onDownloads = (cb) => ipcRenderer.on('page:downloads', (e, list) => cb(list))
   contextBridge.exposeInMainWorld('ibra', api)

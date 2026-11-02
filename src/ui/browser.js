@@ -1,6 +1,9 @@
 // IBRA CROM — منطق شريط المتصفح | برمجة و تطوير ابراهيم الخزرجي
 const I = window.ICONS
 const api = window.ibraUI
+const LANG = api.lang === 'en' ? 'en' : 'ar'
+IBRA_I18N.attach(LANG)
+const T = (x) => IBRA_I18N.tr(x, LANG)
 const $ = (id) => document.getElementById(id)
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
 const hasArabic = (s) => /[؀-ۿ]/.test(s || '')
@@ -23,6 +26,8 @@ $('findprev').innerHTML = I.up
 $('findnext').innerHTML = I.down
 $('findclose').innerHTML = I.close
 document.querySelector('#findbar .ic').innerHTML = I.search
+$('incbadge').innerHTML = I.incognito + '<span>' + T('تصفح متخفٍّ') + '</span>'
+$('incbadge').title = T('لن يحفظ IBRA CROM سجل التصفح أو ملفات تعريف الارتباط في هذه النافذة')
 
 // ── ارتفاع الشريط ──
 const frame = $('frame')
@@ -37,7 +42,9 @@ api.invoke('dl:list').then(l => { downloads = l; renderDl() })
 
 function render() {
   const st = S.settings || {}
-  document.documentElement.dataset.theme = st.theme || 'glass'
+  document.documentElement.dataset.theme = S.incognito ? 'dark' : (st.theme || 'glass')
+  document.documentElement.classList.toggle('incog', !!S.incognito)
+  $('incbadge').hidden = !S.incognito
   document.documentElement.classList.toggle('no-blur', !S.blur)
   renderTabs()
   const n = S.nav || {}
@@ -75,41 +82,125 @@ function render() {
   renderPw()
   renderBookmarks()
   renderClosed()
+  renderAI()
 }
 
 // ═════════ العلامات ═════════
 const tabEls = new Map()
+// ألوان مجموعات الألسن (نفس ألوان Chrome)
+const GCOL = { grey: '#5f6368', blue: '#1a73e8', red: '#d93025', yellow: '#e8a200', green: '#1e8e3e', pink: '#d01884', purple: '#9334e6', cyan: '#007b83', orange: '#fa903e' }
+const GNAMES = { grey: 'رمادي', blue: 'أزرق', red: 'أحمر', yellow: 'أصفر', green: 'أخضر', pink: 'وردي', purple: 'بنفسجي', cyan: 'سماوي', orange: 'برتقالي' }
+const chipEls = new Map()
 function renderTabs() {
   const box = $('tabs')
   const ids = new Set(S.tabs.map(t => t.id))
   for (const [id, el] of tabEls) if (!ids.has(id)) { el.remove(); tabEls.delete(id) }
-  S.tabs.forEach((t, i) => {
-    let el = tabEls.get(t.id)
-    if (!el) { el = makeTab(t.id); tabEls.set(t.id, el) }
-    if (box.children[i] !== el) box.insertBefore(el, box.children[i] || null)
-    el.classList.toggle('active', t.id === S.activeId)
-    const fav = el.querySelector('.fav')
-    const favKey = t.loading ? 'L' : (t.internal ? 'I' : t.favicon || 'G')
-    if (fav.dataset.k !== favKey) {
-      fav.dataset.k = favKey
-      if (t.loading) fav.innerHTML = '<div class="spin"></div>'
-      else if (t.internal) fav.innerHTML = '<img src="../assets/logo64.png" alt="">'
-      else if (t.favicon) { fav.innerHTML = `<img alt="">`; const img = fav.firstChild; img.onerror = () => { fav.innerHTML = I.globe }; img.src = t.favicon }
-      else fav.innerHTML = I.globe
+  const groups = new Map((S.groups || []).map(g => [g.id, g]))
+  for (const [gid, el] of chipEls) if (!groups.has(gid)) { el.remove(); chipEls.delete(gid) }
+  // الترتيب المطلوب: شارة المجموعة قبل أول لسان فيها
+  const order = []
+  let prevG = null
+  for (const t of S.tabs) {
+    if (t.groupId && t.groupId !== prevG && groups.has(t.groupId)) order.push({ chip: t.groupId })
+    prevG = t.groupId
+    order.push({ tab: t })
+  }
+  order.forEach((o, i) => {
+    let el
+    if (o.chip) {
+      const g = groups.get(o.chip)
+      el = chipEls.get(g.id)
+      if (!el) { el = makeChip(g.id); chipEls.set(g.id, el) }
+      el.style.setProperty('--gc', GCOL[g.color] || GCOL.grey)
+      el.classList.toggle('collapsed', !!g.collapsed)
+      el.classList.toggle('noname', !g.name)
+      el.querySelector('span').textContent = g.name || ''
+      el.title = (g.name || T('مجموعة بدون اسم')) + ' — ' + g.count + ' ' + T('ألسن') + '\n' + T('انقر للطي/الفتح، وانقر يمين للتعديل')
+    } else {
+      const t = o.tab
+      el = tabEls.get(t.id)
+      if (!el) { el = makeTab(t.id); tabEls.set(t.id, el) }
+      updateTab(el, t, groups.get(t.groupId))
     }
-    const title = el.querySelector('.title')
-    title.textContent = t.title
-    title.dir = hasArabic(t.title) ? 'rtl' : 'ltr'
-    el.title = t.title + (t.url && !t.internal ? '\n' + t.url : '')
-    el.classList.toggle('proxied', !!t.proxied)
-    const px = el.querySelector('.pxy')
-    px.hidden = !t.proxied
-    const snd = el.querySelector('.snd')
-    snd.hidden = !(t.audible || t.muted)
-    snd.innerHTML = t.muted ? I.muted : I.audio
+    if (box.children[i] !== el) box.insertBefore(el, box.children[i] || null)
   })
   sizeTabs()
 }
+function updateTab(el, t, g) {
+  el.classList.toggle('active', t.id === S.activeId)
+  el.classList.toggle('grouped', !!g)
+  el.classList.toggle('gcollapsed', !!(g && g.collapsed))
+  if (g) el.style.setProperty('--gc', GCOL[g.color] || GCOL.grey); else el.style.removeProperty('--gc')
+  const fav = el.querySelector('.fav')
+  const favKey = t.loading ? 'L' : (t.internal ? 'I' : t.favicon || 'G')
+  if (fav.dataset.k !== favKey) {
+    fav.dataset.k = favKey
+    if (t.loading) fav.innerHTML = '<div class="spin"></div>'
+    else if (t.internal) fav.innerHTML = '<img src="../assets/logo64.png" alt="">'
+    else if (t.favicon) { fav.innerHTML = `<img alt="">`; const img = fav.firstChild; img.onerror = () => { fav.innerHTML = I.globe }; img.src = t.favicon }
+    else fav.innerHTML = I.globe
+  }
+  const title = el.querySelector('.title')
+  title.textContent = t.title
+  title.dir = hasArabic(t.title) ? 'rtl' : 'ltr'
+  el.title = t.title + (t.url && !t.internal ? '\n' + t.url : '')
+  el.classList.toggle('proxied', !!t.proxied)
+  el.querySelector('.pxy').hidden = !t.proxied
+  const snd = el.querySelector('.snd')
+  snd.hidden = !(t.audible || t.muted)
+  snd.innerHTML = t.muted ? I.muted : I.audio
+}
+function makeChip(gid) {
+  const el = document.createElement('div')
+  el.className = 'gchip'
+  el.innerHTML = '<span></span>'
+  el.addEventListener('click', () => api.send('group:toggle', gid))
+  el.addEventListener('contextmenu', (e) => { e.preventDefault(); openGroupEditor(gid) })
+  el.addEventListener('dragover', (e) => { if (e.dataTransfer.types.includes('ibra/tab')) e.preventDefault() })
+  el.addEventListener('drop', (e) => {
+    e.preventDefault()
+    const from = +e.dataTransfer.getData('ibra/tab')
+    const to = S.tabs.findIndex(t => t.groupId === gid)
+    if (from) api.send('tab:move', from, to)
+  })
+  return el
+}
+// ── محرر المجموعة (الاسم واللون) ──
+let editGid = null
+function openGroupEditor(gid) {
+  const g = (S.groups || []).find(x => x.id === gid); if (!g) return
+  editGid = gid
+  const p = $('grouppanel')
+  p.innerHTML = `<input class="gname" maxlength="40" placeholder="${esc(T('سمِّ هذه المجموعة'))}" dir="auto">
+    <div class="gcols">${Object.keys(GCOL).map(c => `<button class="gcol ${c === g.color ? 'on' : ''}" data-c="${c}" title="${esc(T(GNAMES[c]))}" style="--gc:${GCOL[c]}"></button>`).join('')}</div>
+    <div class="msep"></div>
+    <div class="mi" data-a="newtab"><span class="mic">${I.plus}</span><span class="ml">${T('لسان جديد في المجموعة')}</span></div>
+    <div class="mi" data-a="ungroup"><span class="mic">${I.groups}</span><span class="ml">${T('فك تجميع الألسن')}</span></div>
+    <div class="mi" data-a="close"><span class="mic">${I.close}</span><span class="ml">${T('إغلاق المجموعة')}</span></div>`
+  const inp = p.querySelector('.gname')
+  inp.value = g.name || ''
+  inp.addEventListener('input', () => api.send('group:set', gid, { name: inp.value }))
+  inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') closePanels() })
+  p.querySelectorAll('.gcol').forEach(b => b.addEventListener('click', () => {
+    p.querySelectorAll('.gcol').forEach(x => x.classList.toggle('on', x === b))
+    api.send('group:set', gid, { color: b.dataset.c })
+  }))
+  p.querySelectorAll('[data-a]').forEach(b => b.addEventListener('click', () => {
+    const a = b.dataset.a
+    if (a === 'newtab') api.send('group:newtab', gid)
+    else if (a === 'ungroup') api.send('group:ungroup', gid)
+    else if (a === 'close') api.send('group:close', gid)
+    closePanels()
+  }))
+  showPanel('grouppanel')
+  const chip = chipEls.get(gid)
+  const r = (chip && chip.isConnected ? chip : $('tabs')).getBoundingClientRect()
+  p.style.top = (r.bottom + 6) + 'px'
+  p.style.left = Math.max(8, Math.min(r.left + r.width / 2 - 140, innerWidth - 290)) + 'px'
+  setTimeout(() => { inp.focus(); inp.select() }, 30)
+}
+api.on('group:edit', (gid) => setTimeout(() => openGroupEditor(gid), 80))
+
 function makeTab(id) {
   const el = document.createElement('div')
   el.className = 'tab'
@@ -137,7 +228,7 @@ function makeTab(id) {
 function sizeTabs() {
   const strip = $('tabstrip')
   const avail = strip.clientWidth - 40 - 40 - 140 - 60
-  const per = avail / Math.max(1, S.tabs.length)
+  const per = avail / Math.max(1, S.tabs.filter(t => !(t.groupId && (S.groups || []).find(g => g.id === t.groupId)?.collapsed)).length)
   for (const el of tabEls.values()) el.classList.toggle('narrow', per < 92)
 }
 window.addEventListener('resize', sizeTabs)
@@ -221,20 +312,20 @@ function markSel() {
 }
 
 // ═════════ اللوحات ═════════
-const PANELS = ['suggest', 'menu', 'dlpanel', 'closedpanel', 'proxypanel', 'shieldpanel', 'updpanel', 'mediapanel', 'pwpanel']
-function anyOpen() { return PANELS.some(id => !$(id).hidden) }
+const PANELS = ['suggest', 'menu', 'submenu', 'dlpanel', 'closedpanel', 'proxypanel', 'shieldpanel', 'updpanel', 'mediapanel', 'pwpanel', 'grouppanel', 'qrpanel']
+function anyOpen() { return PANELS.some(id => !$(id).hidden) || !!$('bmfolders').children.length }
 function syncOverlay() {
   const on = anyOpen()
   document.body.classList.toggle('overlay-on', on)
   api.send('ui:overlay', on)
 }
 function showPanel(id, keepOthers) {
-  if (!keepOthers) for (const p of PANELS) if (p !== id) $(p).hidden = true
+  if (!keepOthers) { for (const p of PANELS) if (p !== id) $(p).hidden = true; $('bmfolders').replaceChildren() }
   $(id).hidden = false
   syncOverlay()
 }
 function hidePanel(id) { if (!$(id).hidden) { $(id).hidden = true; syncOverlay() } }
-function closePanels() { for (const p of PANELS) $(p).hidden = true; syncOverlay() }
+function closePanels() { for (const p of PANELS) $(p).hidden = true; $('bmfolders').replaceChildren(); document.querySelectorAll('.bm.open').forEach(x => x.classList.remove('open')); syncOverlay() }
 $('overlay').addEventListener('mousedown', (e) => { if (e.target.id === 'overlay') { closePanels(); if (document.activeElement === addr) addr.blur() } })
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && PANELS.some(id => id !== 'suggest' && !$(id).hidden)) closePanels() })
 
@@ -243,77 +334,340 @@ $('menubtn').onclick = () => { if (!$('menu').hidden) return closePanels(); buil
 function buildMenu() {
   const st = S.settings || {}
   const z = S.nav.zoom || 100
-  const item = (a, icon, label, key = '') => `<div class="mi" data-a="${a}"><span class="mic">${icon}</span><span class="ml">${label}</span><span class="mk">${key}</span></div>`
+  const U = S.update || {}
+  const inc = !!S.incognito
+  const item = (a, icon, label, key = '', extra = '') => `<div class="mi" data-a="${a}" ${extra}><span class="mic">${icon}</span><span class="ml">${label}</span><span class="mk">${key}</span></div>`
+  const sub = (id, icon, label) => `<div class="mi has-sub" data-sub="${id}"><span class="mic">${icon}</span><span class="ml">${label}</span><span class="mk arr">${I.chevron}</span></div>`
   const sep = '<div class="msep"></div>'
   const m = $('menu')
   m.innerHTML = [
+    U.status === 'ready' ? `<div class="mi mupd" data-a="installUpdate"><span class="mic">${I.update}</span><span class="ml">أعد التشغيل للتحديث</span><span class="mk">ستُعاد فتح ألسنتك</span></div>`
+      : U.status === 'available' ? `<div class="mi mupd" data-a="checkUpdate"><span class="mic">${I.update}</span><span class="ml">تحديث إلى ${esc(U.version)} متوفر</span><span class="mk"></span></div>` : '',
     item('newTab', I.tab, 'علامة تبويب جديدة', 'Ctrl+T'),
     item('newWindow', I.window, 'نافذة جديدة', 'Ctrl+N'),
-    ...((S.features?.proxy?.enabled !== false) ? [item('proxyTab', I.proxy, 'لسان بروكسي جديد', 'Ctrl+Shift+N')] : []),
+    item('incognito', I.incognito, 'نافذة تصفح متخفٍّ جديدة', 'Ctrl+Shift+N'),
+    ...((S.features?.proxy?.enabled !== false && !inc) ? [item('proxyTab', I.proxy, 'لسان بروكسي جديد', 'Ctrl+Shift+P')] : []),
     sep,
-    item('history', I.history, 'السجل', 'Ctrl+H'),
+    sub('passwords', I.key, 'كلمات السر والملء التلقائي'),
+    sub('history', I.history, 'السجل'),
     item('downloads', I.download, 'التنزيلات', 'Ctrl+J'),
-    item('bookmarks', I.bookmark, 'الإشارات المرجعية', 'Ctrl+Shift+O'),
-    item('reopen', I.reopen, 'إعادة فتح علامة مغلقة', 'Ctrl+Shift+T'),
+    sub('bookmarks', I.star, 'الإشارات المرجعية والقوائم'),
+    sub('groups', I.groups, 'مجموعات الألسن'),
+    sub('extensions', I.puzzle, 'الإضافات'),
+    item('clearData', I.trash, 'حذف بيانات التصفح...', 'Ctrl+Shift+Del'),
     sep,
     `<div class="mrow"><span class="ml"><span class="mic">${I.search}</span>التكبير</span><div class="seg"><button data-a="zoomOut">${I.minus}</button><button class="val" data-a="zoomReset">${z}%</button><button data-a="zoomIn">${I.plus}</button></div><button class="ibtn small" data-a="fullscreen" title="ملء الشاشة (F11)">${I.expand}</button></div>`,
     `<div class="mrow"><span class="ml"><span class="mic">${I.glass}</span>المظهر</span><div class="seg">
-      <button data-a="theme_glass" class="${st.theme === 'glass' ? 'on' : ''}" title="زجاجي">زجاجي</button>
-      <button data-a="theme_light" class="${st.theme === 'light' ? 'on' : ''}" title="أبيض">أبيض</button>
-      <button data-a="theme_dark" class="${st.theme === 'dark' ? 'on' : ''}" title="ليلي">ليلي</button></div></div>`,
-    sep,
-    item('extensions', I.puzzle, 'الإضافات'),
-    item('store', I.store, 'سوق Chrome الإلكتروني'),
+      <button data-a="theme_glass" class="${st.theme === 'glass' ? 'on' : ''}">زجاجي</button>
+      <button data-a="theme_light" class="${st.theme === 'light' ? 'on' : ''}">أبيض</button>
+      <button data-a="theme_dark" class="${st.theme === 'dark' ? 'on' : ''}">ليلي</button></div></div>`,
+    `<div class="mrow"><span class="ml"><span class="mic">${I.lang}</span>اللغة</span><div class="seg">
+      <button data-a="lang_ar" class="${LANG === 'ar' ? 'on' : ''}">عربي</button>
+      <button data-a="lang_en" class="${LANG === 'en' ? 'on' : ''}">English</button></div></div>`,
     sep,
     item('print', I.print, 'طباعة...', 'Ctrl+P'),
-    item('find', I.find, 'بحث في الصفحة...', 'Ctrl+F'),
-    item('savePage', I.save, 'حفظ الصفحة باسم...'),
-    item('bookmarksBar', I.bookmark, (st.showBookmarksBar ? 'إخفاء' : 'إظهار') + ' شريط الإشارات', 'Ctrl+Shift+B'),
-    item('devtools', I.code, 'أدوات المطور', 'F12'),
-    item('taskManager', I.cpu, 'مدير المهام'),
+    item('aiPanel', I.sparkle, 'المساعد الذكي (Gemini…)', 'Alt+A'),
+    item('lensPage', I.lens, 'البحث بـ Google Lens'),
+    item('translate', I.translate, 'ترجمة...'),
+    sub('findedit', I.find, 'البحث والتعديل'),
+    sub('share', I.share, 'الحفظ والمشاركة'),
+    sub('tools', I.tools, 'أدوات إضافية'),
     sep,
-    item('passwords', I.key, 'كلمات السر'),
+    sub('help', I.help, 'مساعدة'),
     item('settings', I.settings, 'الإعدادات'),
-    item('checkUpdate', I.update, S.update?.status === 'available' || S.update?.status === 'ready' ? `تحديث إلى ${esc(S.update.version)} متوفر` : 'البحث عن تحديثات'),
-    item('about', I.info, 'حول IBRA CROM'),
     item('quit', I.exit, 'خروج'),
     `<div class="mfoot">IBRA CROM — برمجة و تطوير <b>ابراهيم الخزرجي</b></div>`,
   ].join('')
   const r = $('menubtn').getBoundingClientRect()
   m.style.top = (r.bottom + 4) + 'px'
-  m.style.left = Math.max(8, r.left) + 'px'
+  m.style.left = Math.max(8, Math.min(r.left, innerWidth - 336 - 20)) + "px"
   m.querySelectorAll('[data-a]').forEach(el => el.addEventListener('click', () => {
     const a = el.dataset.a
+    if (a === 'lang_ar' || a === 'lang_en') { api.send('feature:lang', a.slice(5)); closePanels(); return }
     api.send('menu:action', a)
     if (/^zoom|^theme_/.test(a)) { setTimeout(() => { buildMenu() }, 60); return }
+    closePanels()
+  }))
+  let hoverT
+  m.querySelectorAll('.mi').forEach(el => el.addEventListener('mouseenter', () => {
+    clearTimeout(hoverT)
+    hoverT = setTimeout(() => { if (el.dataset.sub) openSub(el); else closeSub() }, el.dataset.sub ? 120 : 220)
+  }))
+  m.querySelectorAll('.has-sub').forEach(el => el.addEventListener('click', () => openSub(el)))
+}
+
+// ── القوائم الفرعية ──
+function subItems(id) {
+  const st = S.settings || {}, n = S.nav || {}
+  const it = (a, icon, label, key = '', arg = '') => ({ a, icon, label, key, arg })
+  const fav = (f, internal) => internal ? '<img src="../assets/logo64.png" alt="">' : f ? `<img src="${esc(f)}" alt="">` : I.globe
+  switch (id) {
+    case 'passwords': return [it('passwords', I.key, 'كلمات السر'), it('importPasswords', I.upload, 'استيراد كلمات السر من Chrome')]
+    case 'history': return [
+      it('history', I.history, 'السجل', 'Ctrl+H'),
+      '-', { head: 'أُغلقت مؤخراً' },
+      ...(S.closed || []).slice(0, 8).map((c, i) => ({ a: 'reopenIndex', arg: i, iconHtml: fav(c.favicon, c.internal), label: c.title, key: i === 0 ? 'Ctrl+Shift+T' : '' })),
+      ...((S.closed || []).length ? [] : [{ note: 'لا توجد ألسن مغلقة' }]),
+      '-', { head: 'السجل الأخير' },
+      ...(S.recent || []).map(h => ({ a: 'openUrl', arg: h.url, iconHtml: I.globe, label: h.title || h.url })),
+    ]
+    case 'bookmarks': return [
+      it('bookmarkTab', n.bookmarked ? I.starFill : I.star, n.bookmarked ? 'تعديل الإشارة' : 'إضافة إشارة مرجعية لهذا اللسان...', 'Ctrl+D'),
+      it('bookmarkAll', I.star, 'إضافة إشارات لكل الألسن...', 'Ctrl+Shift+D'),
+      it('bookmarksBar', I.bookmark, (st.showBookmarksBar ? 'إخفاء' : 'إظهار') + ' شريط الإشارات', 'Ctrl+Shift+B'),
+      it('bookmarks', I.bookmark, 'مدير الإشارات المرجعية', 'Ctrl+Shift+O'),
+      it('importBookmarks', I.upload, 'استيراد الإشارات من Chrome'),
+      ...((S.bookmarks || []).length ? ['-'] : []),
+      ...(S.bookmarks || []).slice(0, 20).map(b => ({ a: 'openUrl', arg: b.url, iconHtml: b.favicon ? `<img src="${esc(b.favicon)}" alt="">` : I.globe, label: b.title || b.url })),
+    ]
+    case 'groups': return [
+      it('groupNew', I.plus, 'إضافة اللسان إلى مجموعة جديدة'),
+      ...((S.groups || []).length ? ['-'] : []),
+      ...(S.groups || []).map(g => ({ a: 'groupFocus', arg: g.id, iconHtml: `<i class="gdot" style="background:${GCOL[g.color] || GCOL.grey}"></i>`, label: (g.name || 'مجموعة بدون اسم') + ` (${g.count})` })),
+    ]
+    case 'extensions': return [it('extensions', I.puzzle, 'إدارة الإضافات'), it('store', I.store, 'زيارة سوق Chrome الإلكتروني')]
+    case 'findedit': return [it('find', I.find, 'بحث...', 'Ctrl+F'), '-', it('edit_cut', I.cut, 'قص', 'Ctrl+X'), it('edit_copy', I.copy, 'نسخ', 'Ctrl+C'), it('edit_paste', I.paste, 'لصق', 'Ctrl+V')]
+    case 'share': return [
+      it('savePage', I.save, 'حفظ الصفحة باسم...', 'Ctrl+S'),
+      it('copyLink', I.copy, 'نسخ الرابط'),
+      it('qr', I.qr, 'إنشاء رمز QR للصفحة'),
+      it('shortcut', I.app, 'إنشاء اختصار على سطح المكتب...'),
+    ]
+    case 'tools': return [
+      it('taskManager', I.cpu, 'مدير المهام', 'Shift+Esc'),
+      it('devtools', I.code, 'أدوات المطور', 'Ctrl+Shift+I'),
+      it('viewSource', I.code, 'عرض مصدر الصفحة', 'Ctrl+U'),
+      it('clearData', I.trash, 'حذف بيانات التصفح...', 'Ctrl+Shift+Del'),
+    ]
+    case 'help': return [
+      it('about', I.info, 'حول IBRA CROM'),
+      it('checkUpdate', I.update, 'البحث عن تحديثات'),
+      it('whatsNew', I.sparkle, 'ما الجديد'),
+      it('reportIssue', I.warn, 'الإبلاغ عن مشكلة...'),
+      it('telegram', I.share, 'قناة IBRAPROGRAM على تيليجرام'),
+    ]
+  }
+  return []
+}
+let subOf = null
+function closeSub() { $('submenu').hidden = true; subOf = null; document.querySelectorAll('.mi.sub-open').forEach(x => x.classList.remove('sub-open')) }
+function openSub(el) {
+  const id = el.dataset.sub
+  if (subOf === id && !$('submenu').hidden) return
+  closeSub(); subOf = id; el.classList.add('sub-open')
+  const p = $('submenu')
+  p.innerHTML = subItems(id).map(x => {
+    if (x === '-') return '<div class="msep"></div>'
+    if (x.head) return `<div class="mhead">${esc(x.head)}</div>`
+    if (x.note) return `<div class="mnote">${esc(x.note)}</div>`
+    return `<div class="mi" data-a="${x.a}" data-arg="${esc(x.arg ?? '')}"><span class="mic">${x.iconHtml || x.icon}</span><span class="ml" dir="auto">${esc(x.label)}</span><span class="mk">${x.key || ''}</span></div>`
+  }).join('')
+  p.querySelectorAll('.mic img').forEach(i => i.addEventListener('error', () => { i.outerHTML = I.globe }))
+  p.hidden = false
+  const m = $('menu').getBoundingClientRect(), r = el.getBoundingClientRect()
+  const w = 300
+  const toRight = m.left + m.width / 2 < innerWidth / 2
+  p.style.width = w + 'px'
+  p.style.left = (toRight ? m.right - 4 : m.left - w + 4) + 'px'
+  p.style.top = Math.max(8, Math.min(r.top - 6, innerHeight - p.offsetHeight - 8)) + 'px'
+  p.querySelectorAll('[data-a]').forEach(b => b.addEventListener('click', () => {
+    api.send('menu:action', b.dataset.a, b.dataset.arg)
     closePanels()
   }))
 }
 
 // ═════════ الإشارات المرجعية ═════════
+// شريط الإشارات: أولاً إشارات حسابك في Chrome (بنفس الترتيب والمجلدات)، ثم إشارات IBRA CROM
+const favUrl = (u) => { try { const h = new URL(u); return /^https?:$/.test(h.protocol) ? `https://www.google.com/s2/favicons?sz=32&domain=${encodeURIComponent(h.hostname)}` : '' } catch { return '' } }
+let barOverflow = []
+function bmButton(x) {
+  const el = document.createElement('button')
+  el.className = 'bm' + (x.t === 'f' ? ' folder' : '')
+  if (x.t === 'f') {
+    el.innerHTML = `${I.folder}<span dir="auto"></span>`
+    const nm = x.special ? T(x.n) : x.n
+    el.querySelector('span').textContent = nm || T('مجلد')
+    el.title = nm + ' (' + x.count + ')'
+    el.onclick = () => openBmFolder(x.p, el, 0, x.n)
+    el.addEventListener('mouseenter', () => { if (document.querySelector('.bmf')) openBmFolder(x.p, el, 0, x.n) })
+  } else {
+    el.innerHTML = `${I.globe}<span dir="auto"></span>`
+    el.querySelector('span').textContent = x.n || x.u
+    if (!x.n) el.classList.add('iconly')
+    el.title = (x.n ? x.n + '\n' : '') + x.u
+    const f = x.favicon || favUrl(x.u)
+    if (f) { const img = new Image(); img.onload = () => el.firstElementChild.replaceWith(img); img.src = f }
+    el.onclick = (e) => api.send('bm:open', x.u, e.ctrlKey)
+    el.addEventListener('auxclick', (e) => { if (e.button === 1) api.send('bm:open', x.u, true) })
+    if (x.own) el.addEventListener('contextmenu', (e) => { e.preventDefault(); if (confirm(T('حذف الإشارة') + ' "' + (x.n || x.u) + '"؟')) api.send('bookmark:remove', x.own) })
+  }
+  return el
+}
 function renderBookmarks() {
   const bar = $('bookmarksbar')
   const show = S.settings.showBookmarksBar !== false
   bar.hidden = !show
   if (!show) return
-  const key = JSON.stringify(S.bookmarks.map(b => [b.id, b.title, b.favicon]))
+  const cb = S.chromeBar
+  const key = JSON.stringify([cb, S.bookmarks.map(b => [b.id, b.title, b.favicon]), innerWidth, LANG])
   if (bar.dataset.k === key) return
   bar.dataset.k = key
-  if (!S.bookmarks.length) { bar.innerHTML = `<span class="bm-empty">لإضافة إشارة مرجعية اضغط النجمة ★ في شريط العنوان، أو استوردها من كروم في صفحة الإشارات.</span>`; return }
+  const chrome = cb ? cb.items.filter(x => !x.special) : []
+  const pinned = cb ? cb.items.filter(x => x.special) : []
+  const own = S.bookmarks.map(b => ({ t: 'u', n: b.title, u: b.url, favicon: b.favicon, own: b.id }))
+  if (!chrome.length && !own.length && !pinned.length) { bar.innerHTML = `<span class="bm-empty">${T('لإضافة إشارة مرجعية اضغط النجمة ★ في شريط العنوان، أو اربط إشارات حسابك في Chrome من صفحة الإشارات.')}</span>`; return }
   bar.innerHTML = ''
-  for (const b of S.bookmarks) {
-    const el = document.createElement('button')
-    el.className = 'bm'; el.title = b.title + '\n' + b.url
-    let host = ''; try { host = new URL(b.url).hostname } catch {}
-    el.innerHTML = `${I.globe}<span></span>`
-    el.querySelector('span').textContent = b.title || host
-    if (b.favicon) { const img = new Image(); img.onload = () => el.firstElementChild.replaceWith(img); img.src = b.favicon }
-    el.onclick = (e) => api.send('bookmark:open', b.url, e.ctrlKey)
-    el.addEventListener('auxclick', (e) => { if (e.button === 1) api.send('bookmark:open', b.url, true) })
-    el.addEventListener('contextmenu', (e) => { e.preventDefault(); if (confirm('حذف الإشارة "' + (b.title || b.url) + '"؟')) api.send('bookmark:remove', b.id) })
-    bar.appendChild(el)
+  const all = []
+  if (chrome.length) {
+    const src = document.createElement('span'); src.className = 'bm-src'; src.innerHTML = I.google; src.title = T('إشارات حسابك في Chrome') + (cb.label ? '\n' + cb.label : '') + '\n' + T('تتحدث تلقائياً')
+    bar.appendChild(src)
+    for (const x of chrome) all.push(bar.appendChild(bmButton(x)))
+  }
+  if (chrome.length && own.length) { const sp = document.createElement('i'); sp.className = 'bm-sep'; bar.appendChild(sp); all.push(sp) }
+  for (const x of own) all.push(bar.appendChild(bmButton(x)))
+  // ما لا يتسع في الشريط يذهب إلى زر »
+  const more = document.createElement('button'); more.className = 'bm more'; more.innerHTML = '<span>»</span>'; more.title = T('المزيد')
+  bar.appendChild(more)
+  // «إشارات أخرى» و«إشارات الجوال» ثابتة في آخر الشريط مثل Chrome
+  if (pinned.length) { const sp = document.createElement('i'); sp.className = 'bm-sep pin'; bar.appendChild(sp); for (const x of pinned) bar.appendChild(bmButton(x)) }
+  const br = bar.getBoundingClientRect(), rtl = getComputedStyle(bar).direction === 'rtl'
+  const pinW = [...bar.querySelectorAll('.bm-sep.pin, .bm-sep.pin ~ .bm')].reduce((n, e) => n + e.getBoundingClientRect().width + 2, 0)
+  const limitR = br.right - 40 - pinW, limitL = br.left + 40 + pinW
+  barOverflow = []
+  let cut = false
+  all.forEach((el) => {
+    const r = el.getBoundingClientRect()
+    if (!cut && (rtl ? r.left < limitL : r.right > limitR)) cut = true
+    if (cut) { el.hidden = true; if (!el.classList.contains('bm-sep')) barOverflow.push(el) }
+  })
+  more.hidden = !barOverflow.length
+  const items = [...chrome, ...own]
+  more.onclick = () => openBmList(barOverflow.map(el => items[all.filter(x => !x.classList.contains('bm-sep')).indexOf(el)]).filter(Boolean), more, 0)
+}
+window.addEventListener('resize', () => { clearTimeout(window.__bmT); window.__bmT = setTimeout(renderBookmarks, 150) })
+
+// ── قوائم المجلدات المتتالية (مثل Chrome) ──
+async function openBmFolder(p, anchor, depth, name) {
+  const list = await api.invoke('bm:children', p)
+  openBmList(list, anchor, depth, p, name)
+}
+function openBmList(list, anchor, depth, folderPath, name) {
+  const box = $('bmfolders')
+  ;[...box.children].forEach(c => { if (+c.dataset.d >= depth) c.remove() })
+  document.querySelectorAll('.bm.open, .bmf .mi.open').forEach(x => { if (depth === 0 || x.closest('.bmf')?.dataset.d >= depth) x.classList.remove('open') })
+  anchor.classList.add('open')
+  const p = document.createElement('div')
+  p.className = 'panel bmf'; p.dataset.d = depth
+  if (!list.length) p.innerHTML = `<div class="mnote">${T('(فارغ)')}</div>`
+  for (const x of list) {
+    const row = document.createElement('div')
+    row.className = 'mi' + (x.t === 'f' ? ' has-sub' : '')
+    row.innerHTML = `<span class="mic">${x.t === 'f' ? I.folder : I.globe}</span><span class="ml" dir="auto"></span>${x.t === 'f' ? `<span class="mk arr">${I.chevron}</span>` : ''}`
+    row.querySelector('.ml').textContent = x.t === 'f' ? (x.n || T('مجلد')) : (x.n || x.u)
+    if (x.t === 'u') {
+      row.title = x.u
+      const f = x.favicon || favUrl(x.u)
+      if (f) { const img = new Image(); img.onload = () => row.querySelector('.mic').replaceChildren(img); img.src = f }
+      row.addEventListener('click', (e) => { api.send('bm:open', x.u, e.ctrlKey); closePanels() })
+      row.addEventListener('auxclick', (e) => { if (e.button === 1) { e.preventDefault(); api.send('bm:open', x.u, true) } })
+      row.addEventListener('mouseenter', () => { [...box.children].forEach(c => { if (+c.dataset.d > depth) c.remove() }); p.querySelectorAll('.mi.open').forEach(o => o.classList.remove('open')) })
+    } else {
+      let t
+      const go = () => { p.querySelectorAll('.mi.open').forEach(o => o.classList.remove('open')); openBmFolder(x.p, row, depth + 1, x.n) }
+      row.addEventListener('mouseenter', () => { clearTimeout(t); t = setTimeout(go, 160) })
+      row.addEventListener('mouseleave', () => clearTimeout(t))
+      row.addEventListener('click', go)
+    }
+    p.appendChild(row)
+  }
+  const urls = list.filter(x => x.t === 'u').length
+  if (folderPath && list.length) {
+    p.insertAdjacentHTML('beforeend', `<div class="msep"></div><div class="mi openall"><span class="mic">${I.tab}</span><span class="ml">${T('فتح الكل')}${urls ? ` (${urls})` : ''}</span></div>`)
+    p.querySelector('.openall').addEventListener('click', () => { api.send('bm:openAll', folderPath); closePanels() })
+  }
+  box.appendChild(p)
+  document.body.classList.add('overlay-on'); api.send('ui:overlay', true)
+  // الموضع: تحت زر الشريط، أو بجانب العنصر الأب
+  const r = anchor.getBoundingClientRect(), w = Math.min(320, innerWidth - 16)
+  p.style.width = w + 'px'
+  const rtl = document.documentElement.dir === 'rtl'
+  let left, top
+  if (depth === 0) { left = rtl ? r.right - w : r.left; top = r.bottom + 4 }
+  else {
+    const pr = anchor.closest('.bmf').getBoundingClientRect()
+    left = rtl ? pr.left - w + 4 : pr.right - 4
+    if (left < 8 || left + w > innerWidth - 8) left = rtl ? pr.right - 4 : pr.left - w + 4
+    top = r.top - 6
+  }
+  p.style.left = Math.max(8, Math.min(left, innerWidth - w - 8)) + 'px'
+  p.style.maxHeight = (innerHeight - 16) + 'px'
+  p.style.top = Math.max(8, Math.min(top, innerHeight - p.offsetHeight - 8)) + 'px'
+}
+
+// ═════════ المساعد الذكي (لوحة جانبية) ═════════
+$('aibtn').innerHTML = I.sparkle
+$('aibtn').onclick = () => api.send('ai:toggle')
+function renderAI() {
+  const A = S.ai || {}
+  $('aibtn').classList.toggle('on', !!A.open)
+  const h = $('aihead')
+  h.hidden = !A.open
+  if (!A.open) return
+  const w = A.width || 430, rtl = LANG !== 'en'
+  h.style.top = frame.offsetHeight + 'px'
+  h.style.width = w + 'px'
+  h.style.left = rtl ? '0' : ''
+  h.style.right = rtl ? '' : '0'
+  h.classList.toggle('edge-left', !rtl)
+  const key = JSON.stringify([A.provider, A.providers])
+  if (h.dataset.k !== key) {
+    h.dataset.k = key
+    h.innerHTML = `<span class="ait">${I.sparkle}</span>
+      <select class="aisel" title="${esc(T('اختر المساعد'))}">${Object.entries(A.providers || {}).map(([k, v]) => `<option value="${k}" ${k === A.provider ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select>
+      <span class="sp"></span>
+      <button class="ibtn small" data-a="share" title="${esc(T('نسخ رابط هذه الصفحة لمشاركته مع المساعد'))}">${I.share}</button>
+      <button class="ibtn small" data-a="reload" title="${esc(T('إعادة التحميل'))}">${I.reload}</button>
+      <button class="ibtn small" data-a="tab" title="${esc(T('فتح في لسان'))}">${I.window}</button>
+      <button class="ibtn small" data-a="close" title="${esc(T('إغلاق'))} (Alt+A)">${I.close}</button>
+      <i class="aigrip" title="${esc(T('اسحب لتغيير العرض'))}"></i>`
+    h.querySelector('.aisel').onchange = (e) => api.send('ai:provider', e.target.value)
+    h.querySelectorAll('[data-a]').forEach(b => b.onclick = () => {
+      const a = b.dataset.a
+      if (a === 'close') api.send('ai:toggle'); else api.send('ai:' + a)
+    })
+    // تغيير عرض اللوحة بالسحب من حافتها
+    h.querySelector('.aigrip').addEventListener('pointerdown', (e) => {
+      e.preventDefault()
+      const g = e.target; g.setPointerCapture(e.pointerId)
+      const move = (ev) => { const nw = rtl ? ev.clientX : innerWidth - ev.clientX; h.style.width = Math.max(300, Math.min(900, nw)) + 'px'; clearTimeout(g.t); g.t = setTimeout(() => api.send('ai:width', nw), 30) }
+      const up = () => { g.removeEventListener('pointermove', move); g.removeEventListener('pointerup', up) }
+      g.addEventListener('pointermove', move); g.addEventListener('pointerup', up)
+    })
   }
 }
+
+// ═════════ رمز QR للصفحة ═════════
+api.on('qr:open', async () => {
+  const p = $('qrpanel')
+  const r = await api.invoke('qr:make')
+  if (!r) { showToast(T('رمز QR متاح لصفحات الإنترنت فقط')); return }
+  p.innerHTML = `<div class="qrh"><b>${T('امسح رمز QR')}</b><button class="ibtn small" data-a="x">${I.close}</button></div>
+    <div class="qrimg"><img alt=""><img class="qrlogo" src="../assets/logo64.png" alt=""></div>
+    <input class="qru" readonly dir="ltr">
+    <div class="fp-links"><button class="primary" data-a="save">${T('تنزيل')}</button><button data-a="copy">${T('نسخ الصورة')}</button></div>`
+  p.querySelector('.qrimg img').src = r.img
+  p.querySelector('.qru').value = r.url
+  p.querySelector('[data-a=x]').onclick = closePanels
+  p.querySelector('[data-a=copy]').onclick = () => api.send('qr:copy', r.img)
+  p.querySelector('[data-a=save]').onclick = () => api.send('qr:save', r.img, r.title || 'qr')
+  showPanel('qrpanel')
+  const ob = $('omnibox').getBoundingClientRect()
+  p.style.top = (ob.bottom + 6) + 'px'
+  p.style.left = (LANG === 'en' ? ob.right - p.offsetWidth : ob.left) + 'px'
+})
+
+// Alt+F / Alt+E تفتح القائمة
+api.on('menu:open', () => { if ($('menu').hidden) { buildMenu(); showPanel('menu') } else closePanels() })
 
 // ═════════ البحث في الصفحة ═════════
 const fi = $('findinput')
@@ -406,7 +760,8 @@ $('tabstrip').addEventListener('contextmenu', (e) => { if (e.target.closest('.ta
 
 // ═════════ تنبيه سريع ═════════
 let toastT
-api.on('toast', (msg) => { const t = $('toast'); t.textContent = msg; t.style.top = Math.max(4, frame.offsetHeight - 36) + 'px'; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => { t.hidden = true }, 3200) })
+function showToast(msg) { const t = $('toast'); t.textContent = T(msg); t.style.top = Math.max(4, frame.offsetHeight - 36) + 'px'; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => { t.hidden = true }, 3200) }
+api.on('toast', showToast)
 
 // ═════════ IBRA Proxy / AdBlock / Shield ═════════
 const fmtN = (n) => (n || 0).toLocaleString('en-US')
@@ -414,7 +769,7 @@ function renderFeatures() {
   const F = S.features || {}, n = S.nav || {}
   const P = F.proxy || {}, A = F.adblock || {}
   const pb = $('proxybtn')
-  pb.hidden = P.enabled === false
+  pb.hidden = P.enabled === false || !!S.incognito
   pb.classList.toggle('on', !!n.proxied)
   const dot = pb.querySelector('.pdot')
   dot.hidden = !n.proxied

@@ -4,22 +4,27 @@
 // ═══════════════════════════════════════════════════════════
 const {
   app, BrowserWindow, WebContentsView, session, ipcMain, Menu, dialog,
-  shell, clipboard, nativeImage, net, screen, Notification,
+  shell, clipboard, nativeImage, net, screen, Notification, webContents,
 } = require('electron')
 const path = require('path')
 const fs = require('fs')
 const os = require('os')
 const { pathToFileURL, fileURLToPath } = require('url')
 const store = require('./store')
+const i18n = require('./shared/i18n.js')
 const createAdblock = require('./features/adblock')
 const createShield = require('./features/shield')
 const createProxy = require('./features/proxy')
 const createUpdater = require('./features/updater')
 const media = require('./features/media')()
 const passwords = require('./features/passwords')(store)
+const createMirror = require('./features/bookmarks-mirror')
+let bmMirror = { bar: () => null, children: () => [], flatUrls: () => [], info: () => ({}), profiles: () => [], load() {}, importHtml: () => ({ ok: false }) }
 const { resolveIbdm, checkGithub, isIbdmExtension, newer: verNewer } = require('./features/ibdm-ext')
 
 app.setName('IBRA CROM')
+// أزرار النافذة (تصغير/تكبير/إغلاق) تبقى على اليمين دائماً حتى لو كانت لغة ويندوز عربية
+app.commandLine.appendSwitch('force-ui-direction', 'ltr')
 if (process.env.IBRA_TEST_RESOLVE) app.commandLine.appendSwitch('host-resolver-rules', process.env.IBRA_TEST_RESOLVE)
 if (process.platform === 'win32') app.setAppUserModelId('com.ibrahim.ibracrom')
 
@@ -38,7 +43,7 @@ const PAGES_HTML = path.join(__dirname, 'pages', 'internal.html')
 const PAGES_URL = pathToFileURL(PAGES_HTML).href
 const PRELOAD_UI = path.join(__dirname, 'preload-ui.js')
 const PRELOAD_PAGE = path.join(__dirname, 'preload-page.js')
-const INTERNAL_PAGES = ['newtab', 'settings', 'history', 'bookmarks', 'downloads', 'extensions', 'passwords', 'about', 'error', 'blocked', 'proxywait']
+const INTERNAL_PAGES = ['newtab', 'settings', 'history', 'bookmarks', 'downloads', 'extensions', 'passwords', 'about', 'tasks', 'lens', 'error', 'blocked', 'proxywait']
 const VENDOR_DIR = app.isPackaged ? path.join(process.resourcesPath, 'vendor') : path.join(__dirname, '..', 'vendor')
 
 // ── البيانات ──
@@ -54,6 +59,9 @@ const DEFAULT_SETTINGS = {
   restoreZoom: true,
   ibdmCapture: true, // تسليم التحميلات لبرنامج IBDM Pro عندما يكون مشغّلاً
   passwordsOffer: true, passwordsAutofill: true,
+  language: 'auto', // auto | ar | en
+  aiProvider: 'gemini',
+  bmMirror: { enabled: true, profile: '' }, // إشارات حساب Chrome تحت شريط العنوان
   // ── الإضافات المدمجة ──
   adblockEnabled: true, adblockAllow: [],
   shieldEnabled: true, shieldScanDownloads: true,
@@ -84,6 +92,7 @@ const THEME_COLORS = {
 }
 
 let ses = null
+let lensShot = null
 let extensions = null
 let extProxy = null
 let adblock = null, shield = null, proxy = null, updater = null
@@ -93,6 +102,53 @@ const extFor = (proxied) => (proxied && extProxy) || extensions
 const windows = new Set()
 const closedTabs = []
 let tabSeq = 1
+let groupSeq = 0
+const GROUP_COLORS = ['grey', 'blue', 'red', 'yellow', 'green', 'pink', 'purple', 'cyan', 'orange']
+const AI_PROVIDERS = {
+  gemini: { name: 'Gemini', url: 'https://gemini.google.com/app' },
+  chatgpt: { name: 'ChatGPT', url: 'https://chatgpt.com/' },
+  claude: { name: 'Claude', url: 'https://claude.ai/new' },
+  copilot: { name: 'Copilot', url: 'https://copilot.microsoft.com/' },
+  deepseek: { name: 'DeepSeek', url: 'https://chat.deepseek.com/' },
+}
+// جلسة مؤقتة في الذاكرة لنافذة التصفح المتخفي (لا سجل، لا كوكيز تبقى بعد الإغلاق)
+let incogSeq = 0
+function makeIncogSession() {
+  const s = session.fromPartition('ibra-incognito-' + (++incogSeq))
+  s.setUserAgent(chromeUA, acceptLang())
+  if (!process.env.IBRA_NO_NETPIPE) attachNetPipeline(s)
+  adblock?.attach(s)
+  attachPermissions(s)
+  attachDownloads(s)
+  return s
+}
+
+// ── اللغة ──
+function LANG() { const l = settings.language; return l === 'ar' || l === 'en' ? l : (/^ar/i.test(app.getLocale()) ? 'ar' : 'en') }
+const T = (x) => i18n.tr(x, LANG())
+function trMenu(items) {
+  return items.map(it => {
+    if (!it || it.constructor?.name === 'MenuItem') return it
+    const o = { ...it }
+    if (o.label) o.label = T(o.label)
+    if (o.sublabel) o.sublabel = T(o.sublabel)
+    if (Array.isArray(o.submenu)) o.submenu = trMenu(o.submenu)
+    return o
+  })
+}
+const buildMenu = (items) => Menu.buildFromTemplate(trMenu(items))
+function trDlg(o) {
+  o = { ...o }
+  for (const k of ['title', 'message', 'detail', 'checkboxLabel', 'buttonLabel']) if (o[k]) o[k] = T(o[k])
+  if (o.buttons) o.buttons = o.buttons.map(T)
+  if (o.filters) o.filters = o.filters.map(f => ({ ...f, name: T(f.name) }))
+  return o
+}
+const showMsg = (w, o) => dialog.showMessageBox(w, trDlg(o))
+const showOpen = (w, o) => dialog.showOpenDialog(w, trDlg(o))
+const showSave = (w, o) => dialog.showSaveDialog(w, trDlg(o))
+const notif = (o) => new Notification({ ...o, title: T(o.title || ''), body: T(o.body || '') })
+function acceptLang() { return LANG() === 'en' ? 'en-US,en;q=0.9,ar;q=0.8' : 'ar,en-US;q=0.9,en;q=0.8' }
 
 function downloadsDir() {
   return settings.downloadsDir || app.getPath('downloads')
@@ -116,11 +172,12 @@ function displayUrl(tab) {
 function toLoadable(input) {
   let s = (input || '').trim()
   if (!s) return PAGES_URL + '#newtab'
-  const m = s.match(/^(?:ibra|chrome|edge):\/\/([a-z-]+)/i)
+  const m = s.match(/^(?:ibra|chrome|edge):\/\/([a-z-]+)\/?(?:#(.*))?/i)
   if (m) {
     const n = m[1].toLowerCase()
     if (n === 'newtab' || n === 'new-tab-page') return PAGES_URL + '#newtab'
-    if (INTERNAL_PAGES.includes(n)) return PAGES_URL + '#' + n
+    if (n === 'password-manager') return PAGES_URL + '#passwords'
+    if (INTERNAL_PAGES.includes(n)) return PAGES_URL + '#' + n + (m[2] ? '|' + m[2] : '')
     if (n === 'version') return PAGES_URL + '#about'
   }
   if (/^(https?|file|data|view-source|chrome-extension):/i.test(s)) return s
@@ -135,8 +192,10 @@ function homeUrl() { return toLoadable(settings.homepage || 'ibra://newtab') }
 
 // ═════════════════ نافذة المتصفح ═════════════════
 class IbraWindow {
-  constructor({ urls, bounds, maximized } = {}) {
-    const t = THEME_COLORS[settings.theme] || THEME_COLORS.glass
+  constructor({ urls, bounds, maximized, incognito } = {}) {
+    this.incognito = !!incognito
+    this.ses = this.incognito ? makeIncogSession() : ses
+    const t = THEME_COLORS[this.incognito ? 'dark' : settings.theme] || THEME_COLORS.glass
     const wb = bounds || store.load('window', null)?.bounds
     this.win = new BrowserWindow({
       width: wb?.width || 1280, height: wb?.height || 820,
@@ -148,8 +207,8 @@ class IbraWindow {
       titleBarStyle: 'hidden',
       titleBarOverlay: { color: t.bar, symbolColor: t.symbol, height: 40 },
       backgroundColor: t.bg,
-      backgroundMaterial: settings.theme === 'glass' ? 'acrylic' : 'none',
-      webPreferences: { session: ses, sandbox: true },
+      backgroundMaterial: settings.theme === 'glass' && !this.incognito ? 'acrylic' : 'none',
+      webPreferences: { session: this.ses, sandbox: true },
     })
     this.tabs = []
     this.activeId = null
@@ -157,6 +216,8 @@ class IbraWindow {
     this.overlay = false
     this.htmlFull = false
     this.findOpen = false
+    this.groups = new Map() // مجموعات الألسن
+    this.ai = { open: false, view: null, width: 430, provider: settings.aiProvider || 'gemini' }
 
     this.ui = new WebContentsView({
       webPreferences: { session: ses, preload: PRELOAD_UI, sandbox: false, contextIsolation: true, spellcheck: false },
@@ -185,7 +246,7 @@ class IbraWindow {
       const t = this.active()
       const cur = t ? displayUrl(t) : ''
       if (cur && /^https?:/.test(cur)) items.push({ type: 'separator' }, { label: 'نسخ رابط الصفحة', click: () => clipboard.writeText(cur) })
-      Menu.buildFromTemplate(items).popup({ window: this.win })
+      buildMenu(items).popup({ window: this.win })
     })
     this.ui.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
 
@@ -194,14 +255,17 @@ class IbraWindow {
     this.win.on('unmaximize', () => this.layout())
     this.win.on('enter-full-screen', () => this.layout())
     this.win.on('leave-full-screen', () => { this.htmlFull = false; this.layout() })
-    this.win.on('focus', () => { const tab = this.active(); if (tab) extensions.selectTab(tab.wc) })
+    this.win.on('focus', () => { const tab = this.active(); if (tab && !this.incognito) extFor(tab.proxied).selectTab(tab.wc) })
     this.win.on('close', () => {
       if (!this.win.isFullScreen()) store.save('window', { bounds: this.win.getNormalBounds(), maximized: this.win.isMaximized() })
-      if (windows.size === 1) saveSession()
+      if (windows.size === 1 || [...windows].filter(x => !x.incognito).length === 1 && !this.incognito) saveSession()
     })
     this.win.on('closed', () => {
-      for (const tab of this.tabs) { try { tab.closing = true; extFor(tab.proxied).removeTab(tab.wc) } catch {} try { tab.wc.close() } catch {} }
+      for (const tab of this.tabs) { try { tab.closing = true; if (!this.incognito) extFor(tab.proxied).removeTab(tab.wc) } catch {} try { tab.wc.close() } catch {} }
+      try { this.ai.view?.webContents.close() } catch {}
       windows.delete(this)
+      // نافذة التصفح المتخفي: نمسح كل بياناتها عند الإغلاق
+      if (this.incognito) { this.ses.clearStorageData().catch(() => {}); this.ses.clearCache().catch(() => {}) }
     })
 
     this.ui.webContents.once('did-finish-load', () => {
@@ -222,19 +286,20 @@ class IbraWindow {
   byWc(wc) { return this.tabs.find(t => t.wc === wc) }
 
   newTab(url, activate = true, opts = {}) {
-    const proxied = !!opts.proxied && settings.proxyEnabled !== false && !!proxy
+    const proxied = !!opts.proxied && settings.proxyEnabled !== false && !!proxy && !this.incognito
     const view = new WebContentsView({
       webPreferences: {
-        session: proxied ? proxy.session : ses, preload: PRELOAD_PAGE, sandbox: true, contextIsolation: true,
+        session: proxied ? proxy.session : this.ses, preload: PRELOAD_PAGE, sandbox: true, contextIsolation: true,
         nodeIntegration: false, plugins: true, spellcheck: true, scrollBounce: true,
       },
     })
     const wc = view.webContents
-    const tab = { id: tabSeq++, view, wc, title: 'جديد', favicon: '', loading: false, errorUrl: '', audible: false, muted: false, proxied, pendingUrl: '' }
+    const inherit = opts.groupId !== undefined ? opts.groupId : (opts.afterActive ? this.active()?.groupId : null)
+    const tab = { id: tabSeq++, view, wc, title: 'جديد', favicon: '', loading: false, errorUrl: '', audible: false, muted: false, proxied, pendingUrl: '', groupId: inherit && this.groups.has(inherit) ? inherit : null }
     const at = opts.index ?? (opts.afterActive ? this.tabs.indexOf(this.active()) + 1 : this.tabs.length)
     this.tabs.splice(Math.max(0, Math.min(at, this.tabs.length)), 0, tab)
     this.wireTab(tab)
-    if (!opts.skipExtensions) extFor(proxied).addTab(wc, this.win)
+    if (!opts.skipExtensions && !this.incognito) extFor(proxied).addTab(wc, this.win)
     let target = toLoadable(url)
     if (proxied && !target.startsWith(PAGES_URL)) target = this.proxyGate(tab, target)
     this.applyBg(tab, target)
@@ -302,7 +367,7 @@ class IbraWindow {
     wc.on('did-navigate', (e, url) => {
       const n = internalName(url)
       if (n !== 'error' && n !== 'blocked') tab.errorUrl = ''
-      if (!n) addHistory(url, wc.getTitle())
+      if (!n && !this.incognito) addHistory(url, wc.getTitle())
       else tab.favicon = ''
       if (n && n !== 'error') tab.title = pageTitle(n)
       upd()
@@ -362,7 +427,7 @@ class IbraWindow {
     this.win.contentView.addChildView(tab.view)
     if (this.overlay) this.win.contentView.addChildView(this.ui)
     this.layout()
-    extFor(tab.proxied).selectTab(tab.wc)
+    if (!this.incognito) extFor(tab.proxied).selectTab(tab.wc)
     if (this.win.isFocused() && !this.overlay) tab.wc.focus()
     this.sendState()
   }
@@ -375,14 +440,15 @@ class IbraWindow {
     tab.closing = true
     const url = tab.wc.getURL()
     const iname = internalName(url)
-    if (!opts.silent && url && iname !== 'newtab') closedTabs.push({ proxied: tab.proxied, url: (iname === 'error' || iname === 'blocked') ? tab.errorUrl : iname === 'proxywait' ? tab.pendingUrl : url, title: tab.title || url, favicon: tab.favicon || '', internal: !!internalName(url) && internalName(url) !== 'error', time: Date.now() })
+    if (!opts.silent && !this.incognito && url && iname !== 'newtab') closedTabs.push({ proxied: tab.proxied, url: (iname === 'error' || iname === 'blocked') ? tab.errorUrl : iname === 'proxywait' ? tab.pendingUrl : url, title: tab.title || url, favicon: tab.favicon || '', internal: !!internalName(url) && internalName(url) !== 'error', time: Date.now() })
     if (closedTabs.length > 25) closedTabs.shift()
     this.tabs.splice(idx, 1)
-    try { extFor(tab.proxied).removeTab(tab.wc) } catch {}
+    try { if (!this.incognito) extFor(tab.proxied).removeTab(tab.wc) } catch {}
     shieldPending.delete(tab.wc.id)
     tabMedia.delete(tab.wc.id)
     try { this.win.contentView.removeChildView(tab.view) } catch {}
     try { tab.wc.close() } catch {}
+    this.cleanGroups()
     if (!this.tabs.length) { this.win.close(); return }
     if (this.activeId === id) this.activate(this.tabs[Math.min(idx, this.tabs.length - 1)].id)
     else this.sendState()
@@ -403,8 +469,78 @@ class IbraWindow {
     const tab = this.active()
     if (!tab) return
     const top = this.htmlFull ? 0 : this.chromeHeight
-    tab.view.setBounds({ x: 0, y: top, width: w, height: Math.max(0, h - top) })
+    let x = 0, width = w
+    if (this.ai.open && this.ai.view && !this.htmlFull) {
+      const pw = Math.round(Math.min(this.ai.width, w * 0.55))
+      const left = LANG() !== 'en' // في العربية اللوحة على اليسار، وفي الإنجليزية على اليمين (مثل Chrome)
+      this.ai.view.setBounds({ x: left ? 0 : w - pw, y: top + 42, width: pw, height: Math.max(0, h - top - 42) })
+      width = w - pw; x = left ? pw : 0
+    }
+    tab.view.setBounds({ x, y: top, width, height: Math.max(0, h - top) })
   }
+
+  // ═════ المساعد الذكي في لوحة جانبية ═════
+  toggleAI(force) {
+    const open = force ?? !this.ai.open
+    if (open && !this.ai.view) {
+      const v = new WebContentsView({ webPreferences: { session: this.ses, preload: PRELOAD_PAGE, sandbox: true, contextIsolation: true, spellcheck: true } })
+      v.setBackgroundColor('#ffffff')
+      v.webContents.setWindowOpenHandler((d) => { this.newTab(d.url, true, { afterActive: true }); return { action: 'deny' } })
+      v.webContents.on('context-menu', (e, p) => showContextMenu(this, { wc: v.webContents }, p))
+      v.webContents.on('before-input-event', (e, input) => { if (handleShortcut(this, input)) e.preventDefault() })
+      v.webContents.loadURL(AI_PROVIDERS[this.ai.provider]?.url || AI_PROVIDERS.gemini.url).catch(() => {})
+      this.ai.view = v
+    }
+    this.ai.open = open
+    if (this.ai.view) {
+      if (open) this.win.contentView.addChildView(this.ai.view)
+      else try { this.win.contentView.removeChildView(this.ai.view) } catch {}
+    }
+    if (this.overlay) this.win.contentView.addChildView(this.ui)
+    this.layout(); this.sendState()
+  }
+  setAIProvider(id) {
+    if (!AI_PROVIDERS[id]) return
+    this.ai.provider = id; setSettings({ aiProvider: id })
+    if (this.ai.view) this.ai.view.webContents.loadURL(AI_PROVIDERS[id].url).catch(() => {})
+    this.sendState()
+  }
+
+  // ═════ مجموعات الألسن ═════
+  groupTabs(ids, gid) {
+    if (!gid) {
+      gid = 'g' + (++groupSeq)
+      const used = new Set([...this.groups.values()].map(g => g.color))
+      this.groups.set(gid, { id: gid, name: '', color: GROUP_COLORS.find(c => !used.has(c)) || GROUP_COLORS[groupSeq % GROUP_COLORS.length], collapsed: false })
+    }
+    for (const id of ids) {
+      const t = this.tabs.find(x => x.id === id); if (!t) continue
+      t.groupId = gid
+      // نخلي ألسن المجموعة متجاورة
+      const members = this.tabs.filter(x => x.groupId === gid && x !== t)
+      if (members.length) { this.tabs.splice(this.tabs.indexOf(t), 1); this.tabs.splice(this.tabs.indexOf(members[members.length - 1]) + 1, 0, t) }
+    }
+    this.cleanGroups(); this.sendState()
+    return gid
+  }
+  ungroupTab(id) { const t = this.tabs.find(x => x.id === id); if (t) { t.groupId = null; this.cleanGroups(); this.sendState() } }
+  setGroup(gid, patch) {
+    const g = this.groups.get(gid); if (!g) return
+    if (typeof patch.name === 'string') g.name = patch.name.slice(0, 40)
+    if (GROUP_COLORS.includes(patch.color)) g.color = patch.color
+    if (typeof patch.collapsed === 'boolean') {
+      g.collapsed = patch.collapsed
+      const a = this.active()
+      if (g.collapsed && a && a.groupId === gid) {
+        const other = this.tabs.find(x => x.groupId !== gid && !(x.groupId && this.groups.get(x.groupId)?.collapsed))
+        if (other) this.activate(other.id); else this.newTab('ibra://newtab', true, { groupId: null })
+      }
+    }
+    this.sendState()
+  }
+  ungroup(gid) { for (const t of this.tabs) if (t.groupId === gid) t.groupId = null; this.cleanGroups(); this.sendState() }
+  closeGroup(gid) { for (const t of this.tabs.filter(x => x.groupId === gid)) this.closeTab(t.id) }
+  cleanGroups() { for (const gid of [...this.groups.keys()]) if (!this.tabs.some(t => t.groupId === gid)) this.groups.delete(gid) }
 
   setOverlay(on) {
     this.overlay = !!on
@@ -416,9 +552,10 @@ class IbraWindow {
   }
 
   applyTheme() {
-    const t = THEME_COLORS[settings.theme] || THEME_COLORS.glass
+    const th = this.incognito ? 'dark' : settings.theme
+    const t = THEME_COLORS[th] || THEME_COLORS.glass
     try { this.win.setTitleBarOverlay({ color: t.bar, symbolColor: t.symbol, height: 40 }) } catch {}
-    try { this.win.setBackgroundMaterial(settings.theme === 'glass' ? 'acrylic' : 'none') } catch {}
+    try { this.win.setBackgroundMaterial(th === 'glass' ? 'acrylic' : 'none') } catch {}
     this.win.setBackgroundColor(t.bg)
   }
 
@@ -428,7 +565,7 @@ class IbraWindow {
       const d = displayUrl(t)
       return {
         id: t.id, title: t.title || d || 'جديد', favicon: t.favicon, loading: t.loading,
-        url: d, internal: !!internalName(url) && !['error', 'blocked', 'proxywait'].includes(internalName(url)), audible: t.audible, muted: t.wc.isAudioMuted(), proxied: !!t.proxied, media: !!t.media,
+        url: d, internal: !!internalName(url) && !['error', 'blocked', 'proxywait'].includes(internalName(url)), audible: t.audible, muted: t.wc.isAudioMuted(), proxied: !!t.proxied, media: !!t.media, groupId: t.groupId || null,
       }
     })
     const a = this.active()
@@ -452,7 +589,10 @@ class IbraWindow {
       adblock: adblock ? (({ enabled, ready, total }) => ({ enabled, ready, total }))(adblock.info()) : {},
       shield: shield ? { enabled: shield.info().enabled, blocked: shield.info().stats.blocked } : {},
     }
-    return { tabs, activeId: this.activeId, nav, closed, features, update: updater ? updater.info() : {}, ibdm: !!IBDM.cfg, settings, bookmarks: bookmarks.slice(0, 60), platform: process.platform, blur: HAS_BLUR, maximized: this.win.isMaximized() }
+    const groups = [...this.groups.values()].map(g => ({ ...g, count: this.tabs.filter(t => t.groupId === g.id).length }))
+    const recent = []; for (let i = history.length - 1; i >= 0 && recent.length < 8; i--) if (!recent.some(r => r.url === history[i].url)) recent.push({ url: history[i].url, title: history[i].title })
+    const ai = { open: this.ai.open, provider: this.ai.provider, width: Math.round(Math.min(this.ai.width, this.win.getContentSize()[0] * 0.55)), providers: Object.fromEntries(Object.entries(AI_PROVIDERS).map(([k, v]) => [k, v.name])) }
+    return { tabs, activeId: this.activeId, nav, closed: this.incognito ? [] : closed, features, groups, recent: this.incognito ? [] : recent, ai, incognito: this.incognito, chromeBar: bmMirror.bar(), lang: LANG(), update: updater ? updater.info() : {}, ibdm: !!IBDM.cfg, settings, bookmarks: bookmarks.slice(0, 60), platform: process.platform, blur: HAS_BLUR, maximized: this.win.isMaximized() }
   }
 
   sendState() {
@@ -475,7 +615,7 @@ function reopenClosed(w, index = 0) {
 }
 
 function pageTitle(n) {
-  return ({ blocked: 'موقع خطير!', proxywait: 'جاري الاتصال بالبروكسي…', newtab: 'علامة تبويب جديدة', settings: 'الإعدادات', history: 'السجل', bookmarks: 'الإشارات المرجعية', downloads: 'التنزيلات', extensions: 'الإضافات', passwords: 'كلمات السر', about: 'حول IBRA CROM', error: 'تعذر الوصول' })[n] || 'IBRA CROM'
+  return T(({ blocked: 'موقع خطير!', proxywait: 'جاري الاتصال بالبروكسي…', newtab: 'علامة تبويب جديدة', settings: 'الإعدادات', history: 'السجل', bookmarks: 'الإشارات المرجعية', downloads: 'التنزيلات', extensions: 'الإضافات', passwords: 'كلمات السر', tasks: 'مدير المهام', lens: 'Google Lens', about: 'حول IBRA CROM', error: 'تعذر الوصول' })[n] || 'IBRA CROM')
 }
 
 function winOf(bw) { for (const w of windows) if (w.win === bw) return w }
@@ -500,7 +640,7 @@ function addHistory(url, title) {
 function saveSession() {
   if (!windows.size) return
   const s = []
-  for (const w of windows) s.push(w.tabs.map(t => internalName(t.wc.getURL()) === 'error' ? t.errorUrl : t.wc.getURL()).filter(Boolean))
+  for (const w of windows) if (!w.incognito) s.push(w.tabs.map(t => internalName(t.wc.getURL()) === 'error' ? t.errorUrl : t.wc.getURL()).filter(Boolean))
   store.save('session', s, 0)
 }
 
@@ -515,7 +655,14 @@ function handleShortcut(w, i) {
   if (ctrl && i.shift && (k === 't' || code === 'KeyT')) { reopenClosed(w); return true }
   if (ctrl && (k === 'w' || code === 'KeyW' || k === 'f4')) { if (tab) w.closeTab(tab.id); return true }
   if (ctrl && !i.shift && (k === 'n' || code === 'KeyN')) { new IbraWindow(); return true }
-  if (ctrl && i.shift && (k === 'n' || code === 'KeyN')) { menuAction(w, 'proxyTab'); return true }
+  if (ctrl && i.shift && (k === 'n' || code === 'KeyN')) { menuAction(w, 'incognito'); return true }
+  if (ctrl && i.shift && (k === 'p' || code === 'KeyP')) { menuAction(w, 'proxyTab'); return true }
+  if (ctrl && i.shift && (k === 'delete' || code === 'Delete')) { menuAction(w, 'clearData'); return true }
+  if (i.shift && !ctrl && k === 'escape') { menuAction(w, 'taskManager'); return true }
+  if (ctrl && !i.shift && (k === 's' || code === 'KeyS')) { menuAction(w, 'savePage'); return true }
+  if (ctrl && i.shift && (k === 'd' || code === 'KeyD')) { menuAction(w, 'bookmarkAll'); return true }
+  if (i.alt && !ctrl && (k === 'a' || code === 'KeyA')) { w.toggleAI(); return true }
+  if (i.alt && !ctrl && (k === 'f' || k === 'e' || code === 'KeyF' || code === 'KeyE')) { w.ui.webContents.focus(); w.ui.webContents.send('menu:open'); return true }
   if (ctrl && k === 'tab') { cycle(w, i.shift ? -1 : 1); return true }
   if (ctrl && (k === 'pagedown')) { cycle(w, 1); return true }
   if (ctrl && (k === 'pageup')) { cycle(w, -1); return true }
@@ -601,6 +748,7 @@ function setSettings(patch) {
   settings = Object.assign({}, settings, patch)
   store.save('settings', settings)
   if (themeChanged) for (const w of windows) w.applyTheme()
+  if ('language' in patch) applyLanguage()
   if ('proxyEnabled' in patch && patch.proxyEnabled === false) {
     for (const w of windows) for (const t of [...w.tabs]) if (t.proxied) w.setTabProxy(t.id, false)
     proxy?.shutdown()
@@ -609,6 +757,18 @@ function setSettings(patch) {
   broadcastState()
   notifyPages('settings')
 }
+let lastLang = null
+function applyLanguage() {
+  const l = LANG()
+  if (l === lastLang) return
+  lastLang = l
+  for (const s of [ses, proxy?.session, ...incogSessions()]) if (s) s.setUserAgent(chromeUA, acceptLang())
+  for (const w of windows) {
+    w.ui.webContents.reload()
+    for (const t of w.tabs) if (internalName(t.wc.getURL()) && !['error', 'blocked', 'proxywait'].includes(internalName(t.wc.getURL()))) { t.title = pageTitle(internalName(t.wc.getURL())); t.wc.reload() }
+  }
+}
+function incogSessions() { const out = new Set(); for (const w of windows) if (w.incognito) out.add(w.ses); return [...out] }
 function proxyInUse() { for (const w of windows) if (w.tabs.some(t => t.proxied)) return true; return false }
 let featT = null
 function featuresChanged() {
@@ -639,6 +799,7 @@ function showContextMenu(w, tab, p) {
     items.push({ label: 'فتح الصورة في علامة تبويب جديدة', click: () => w.newTab(p.srcURL, false, { afterActive: true }) })
     items.push({ label: 'حفظ الصورة باسم...', click: () => wc.downloadURL(p.srcURL) })
     items.push({ label: 'نسخ الصورة', click: () => wc.copyImageAt(p.x, p.y) })
+    if (/^https?:/i.test(p.srcURL)) items.push({ label: 'البحث عن الصورة باستخدام Google Lens', click: () => w.newTab('https://lens.google.com/uploadbyurl?url=' + encodeURIComponent(p.srcURL), true, { afterActive: true }) })
     items.push({ label: 'نسخ عنوان الصورة', click: () => clipboard.writeText(p.srcURL) })
     sep()
   }
@@ -660,6 +821,7 @@ function showContextMenu(w, tab, p) {
     const s = p.selectionText.trim()
     items.push({ label: 'نسخ', role: 'copy' })
     items.push({ label: `البحث في ${(ENGINES[settings.searchEngine] || ENGINES.google).name} عن "${s.length > 24 ? s.slice(0, 24) + '…' : s}"`, click: () => w.newTab(toLoadable(s), true, { afterActive: true }) })
+    items.push({ label: `ترجمة «${s.length > 20 ? s.slice(0, 20) + '…' : s}»`, click: () => w.newTab(`https://translate.google.com/?sl=auto&tl=${LANG()}&text=${encodeURIComponent(s.slice(0, 4000))}&op=translate`, true, { afterActive: true }) })
     sep()
   }
   if (!p.linkURL && !p.selectionText && !p.isEditable && !p.hasImageContents && tab.id) {
@@ -668,6 +830,11 @@ function showContextMenu(w, tab, p) {
     items.push({ label: 'إعادة التحميل', click: () => wc.reload() })
     sep()
     items.push({ label: 'حفظ الصفحة باسم...', click: () => savePage(w, wc) })
+    if (/^https?:/.test(wc.getURL()) && tab.id) {
+      items.push({ label: LANG() === 'en' ? 'ترجمة إلى English' : 'ترجمة إلى العربية', click: () => menuAction(w, 'translate') })
+      items.push({ label: 'البحث في هذا اللسان باستخدام Google Lens', click: () => menuAction(w, 'lensPage') })
+      items.push({ label: 'إنشاء رمز QR للصفحة', click: () => menuAction(w, 'qr') })
+    }
     items.push({ label: 'طباعة...', click: () => wc.print() })
     if (/^https?:/.test(wc.getURL())) items.push({ label: 'عرض مصدر الصفحة', click: () => w.newTab('view-source:' + wc.getURL(), true, { afterActive: true }) })
     sep()
@@ -696,11 +863,11 @@ function showContextMenu(w, tab, p) {
   } catch {}
   sep()
   items.push({ label: 'فحص العنصر', click: () => { wc.inspectElement(p.x, p.y) } })
-  Menu.buildFromTemplate(items).popup({ window: w.win })
+  buildMenu(items).popup({ window: w.win })
 }
 
 async function savePage(w, wc) {
-  const r = await dialog.showSaveDialog(w.win, {
+  const r = await showSave(w.win, {
     defaultPath: path.join(downloadsDir(), (wc.getTitle() || 'page').replace(/[\\/:*?"<>|]/g, '_') + '.html'),
     filters: [{ name: 'صفحة ويب كاملة', extensions: ['html', 'htm'] }],
   })
@@ -841,7 +1008,7 @@ function attachDownloads(s) {
       store.save('downloads', downloadsList.slice(-500))
       pushDownloads(true)
       if (state === 'completed' && Notification.isSupported()) {
-        const n = new Notification({ title: 'اكتمل التنزيل', body: rec.filename, icon: path.join(__dirname, 'assets', 'logo.png') })
+        const n = notif({ title: 'اكتمل التنزيل', body: rec.filename, icon: path.join(__dirname, 'assets', 'logo.png') })
         n.on('click', () => shell.showItemInFolder(rec.path)); n.show()
       }
       if (state === 'completed') scanDownload(rec)
@@ -859,7 +1026,7 @@ async function scanDownload(rec) {
   store.save('downloads', downloadsList.slice(-500)); pushDownloads(true)
   if (r === 'threat') {
     for (const w of windows) w.ui.webContents.send('toast', '⚠ تحذير: الملف «' + rec.filename + '» يحتوي على فيروس! احذفه من صفحة التنزيلات')
-    if (Notification.isSupported()) new Notification({ title: 'IBRA Shield — تم اكتشاف فيروس!', body: rec.filename + '\nلا تفتح هذا الملف واحذفه من صفحة التنزيلات.', icon: path.join(__dirname, 'assets', 'logo.png'), urgency: 'critical' }).show()
+    if (Notification.isSupported()) notif({ title: 'IBRA Shield — تم اكتشاف فيروس!', body: rec.filename + '\nلا تفتح هذا الملف واحذفه من صفحة التنزيلات.', icon: path.join(__dirname, 'assets', 'logo.png'), urgency: 'critical' }).show()
   }
 }
 
@@ -893,7 +1060,7 @@ function attachPermissions(s) {
     const key = origin + '|' + permission
     if (key in sitePerms) return cb(sitePerms[key])
     const bw = BrowserWindow.fromWebContents(wc) || winOfTab(wc)?.win || focusedWin()?.win
-    const r = await dialog.showMessageBox(bw, {
+    const r = await showMsg(bw, {
       type: 'question', buttons: ['سماح', 'رفض'], defaultId: 0, cancelId: 1, title: 'IBRA CROM',
       message: `${origin} يطلب: ${ASK[permission]}`, checkboxLabel: 'تذكر قراري لهذا الموقع', checkboxChecked: true,
     })
@@ -1012,6 +1179,8 @@ async function removeExtension(id) {
 // ═════════════════ IPC: الواجهة ═════════════════
 function setupIpc() {
   const W = (e) => winOfUi(e.sender)
+  ipcMain.on('ui:lang', (e) => { e.returnValue = LANG() })
+  ipcMain.on('page:lang', (e) => { e.returnValue = LANG() })
   ipcMain.on('ui:height', (e, h) => { const w = W(e); if (w && h > 0) { w.chromeHeight = Math.round(h); w.layout() } })
   ipcMain.on('ui:overlay', (e, on) => W(e)?.setOverlay(on))
   ipcMain.on('ui:ready', (e) => W(e)?.sendState())
@@ -1080,13 +1249,17 @@ function setupIpc() {
   ipcMain.on('tab:mute', (e, id) => { const w = W(e); const t = w?.tabs.find(x => x.id === id); if (t) { t.wc.setAudioMuted(!t.wc.isAudioMuted()); w.sendState() } })
   ipcMain.on('tab:menu', (e, id) => {
     const w = W(e); const t = w?.tabs.find(x => x.id === id); if (!t) return
-    Menu.buildFromTemplate([
+    buildMenu([
       { label: 'علامة تبويب جديدة', click: () => w.newTab('ibra://newtab', true, { index: w.tabs.indexOf(t) + 1 }) },
       { label: 'إعادة التحميل', click: () => t.wc.reload() },
       { label: 'تكرار', click: () => w.newTab(t.wc.getURL(), true, { index: w.tabs.indexOf(t) + 1 }) },
       ...(settings.proxyEnabled !== false ? [{ label: t.proxied ? 'إيقاف البروكسي لهذا اللسان' : 'تشغيل البروكسي لهذا اللسان', click: () => w.setTabProxy(t.id, !t.proxied) }] : []),
       { label: t.wc.isAudioMuted() ? 'إلغاء كتم الموقع' : 'كتم صوت الموقع', click: () => { t.wc.setAudioMuted(!t.wc.isAudioMuted()); w.sendState() } },
-      { label: 'نقل إلى نافذة جديدة', click: () => { const u = t.wc.getURL(); w.closeTab(t.id); new IbraWindow({ urls: [u] }) } },
+      { label: 'نقل إلى نافذة جديدة', click: () => { const u = t.wc.getURL(); w.closeTab(t.id); new IbraWindow({ urls: [u], incognito: w.incognito }) } },
+      { type: 'separator' },
+      { label: 'إضافة اللسان إلى مجموعة جديدة', click: () => { const g = w.groupTabs([t.id]); w.ui.webContents.send('group:edit', g) } },
+      ...(w.groups.size ? [{ label: 'إضافة إلى مجموعة', submenu: [...w.groups.values()].filter(g => g.id !== t.groupId).map(g => ({ label: (g.name || 'مجموعة بدون اسم') + ' (' + w.tabs.filter(x => x.groupId === g.id).length + ')', click: () => w.groupTabs([t.id], g.id) })) }] : []),
+      ...(t.groupId ? [{ label: 'إزالة من المجموعة', click: () => w.ungroupTab(t.id) }] : []),
       { type: 'separator' },
       { label: 'إغلاق', click: () => w.closeTab(t.id) },
       { label: 'إغلاق علامات التبويب الأخرى', click: () => w.tabs.filter(x => x !== t).forEach(x => w.closeTab(x.id)) },
@@ -1118,14 +1291,40 @@ function setupIpc() {
     t.wc.findInPage(text, fo)
   })
   ipcMain.on('find:stop', (e) => { const w = W(e); if (!w) return; w.findOpen = false; w.active()?.wc.stopFindInPage('clearSelection') })
-  ipcMain.on('menu:action', (e, a) => menuAction(W(e), a))
+  ipcMain.on('menu:action', (e, a, arg) => menuAction(W(e), a, arg))
+  ipcMain.on('feature:lang', (e, l) => { if (l === 'ar' || l === 'en') setSettings({ language: l }) })
+  // مجموعات الألسن
+  ipcMain.on('group:toggle', (e, gid) => { const w = W(e); const g = w?.groups.get(gid); if (g) w.setGroup(gid, { collapsed: !g.collapsed }) })
+  ipcMain.on('group:set', (e, gid, patch) => W(e)?.setGroup(gid, patch || {}))
+  ipcMain.on('group:ungroup', (e, gid) => W(e)?.ungroup(gid))
+  ipcMain.on('group:close', (e, gid) => W(e)?.closeGroup(gid))
+  ipcMain.on('group:newtab', (e, gid) => { const w = W(e); if (w?.groups.has(gid)) { const last = [...w.tabs].reverse().find(x => x.groupId === gid); w.newTab('ibra://newtab', true, { groupId: gid, index: w.tabs.indexOf(last) + 1 }) } })
+  // المساعد الذكي
+  ipcMain.on('ai:toggle', (e) => W(e)?.toggleAI())
+  ipcMain.on('ai:provider', (e, id) => W(e)?.setAIProvider(id))
+  ipcMain.on('ai:reload', (e) => W(e)?.ai.view?.webContents.reload())
+  ipcMain.on('ai:tab', (e) => { const w = W(e); const u = w?.ai.view?.webContents.getURL(); if (u) w.newTab(u) })
+  ipcMain.on('ai:width', (e, px) => { const w = W(e); if (w) { w.ai.width = Math.max(300, Math.min(900, +px || 430)); w.layout(); w.sendState() } })
+  ipcMain.on('ai:share', (e) => { const w = W(e); const t = w?.active(); if (t) { const u = displayUrl(t); clipboard.writeText((t.title ? t.title + '\n' : '') + u); w.ui.webContents.send('toast', 'تم نسخ رابط الصفحة — الصقه في المحادثة') } })
+  // إشارات Chrome
+  ipcMain.handle('bm:children', (e, p) => bmMirror.children(Array.isArray(p) ? p.map(Number) : []))
+  ipcMain.on('bm:open', (e, url, newTab) => { const w = W(e); if (!w || !/^(https?|file|ibra|chrome):/i.test(url)) return; if (newTab) w.newTab(url, false, { afterActive: true }); else w.active()?.wc.loadURL(toLoadable(url)).catch(() => {}) })
+  ipcMain.on('bm:openAll', async (e, p) => { const w = W(e); if (!w) return; const walk = (l) => l.flatMap(x => x.t === 'u' ? [x.u] : walk(bmMirror.children(x.p))); for (const u of walk(bmMirror.children(p)).slice(0, 30)) w.newTab(u, false) })
+  // رمز QR
+  ipcMain.handle('qr:make', async (e) => { const w = W(e); const t = w?.active(); const u = t ? displayUrl(t) : ''; if (!/^https?:/.test(u)) return null; return { url: u, title: t.title, img: await require('qrcode').toDataURL(u, { width: 512, margin: 2, color: { dark: '#111111', light: '#ffffff' } }) } })
+  ipcMain.on('qr:save', async (e, dataUrl, name) => {
+    const w = W(e); if (!w || !/^data:image\/png;base64,/.test(dataUrl)) return
+    const r = await showSave(w.win, { defaultPath: path.join(app.getPath('downloads'), (String(name || 'qr').replace(/[\\/:*?"<>|]/g, '_').slice(0, 60) || 'qr') + '.png'), filters: [{ name: 'PNG', extensions: ['png'] }] })
+    if (!r.canceled && r.filePath) { fs.writeFileSync(r.filePath, Buffer.from(dataUrl.split(',')[1], 'base64')); w.ui.webContents.send('toast', 'تم حفظ رمز QR') }
+  })
+  ipcMain.on('qr:copy', (e, dataUrl) => { if (/^data:image\/png;base64,/.test(dataUrl)) { clipboard.writeImage(nativeImage.createFromDataURL(dataUrl)); W(e)?.ui.webContents.send('toast', 'تم نسخ الصورة') } })
   ipcMain.on('dl:action', (e, id, a) => downloadAction(id, a))
   ipcMain.handle('dl:list', () => downloadsList.slice(-200).reverse())
   ipcMain.handle('suggest', async (e, q) => {
     q = (q || '').trim(); if (!q) return { local: [], remote: [] }
     const ql = q.toLowerCase()
     const seen = new Set(); const local = []
-    for (const b of bookmarks) if ((b.url + ' ' + b.title).toLowerCase().includes(ql) && !seen.has(b.url)) { seen.add(b.url); local.push({ url: b.url, title: b.title, kind: 'bookmark' }); if (local.length >= 3) break }
+    for (const b of [...bookmarks, ...bmMirror.flatUrls()]) if ((b.url + ' ' + b.title).toLowerCase().includes(ql) && !seen.has(b.url)) { seen.add(b.url); local.push({ url: b.url, title: b.title, kind: 'bookmark' }); if (local.length >= 3) break }
     for (let i = history.length - 1; i >= 0 && local.length < 6; i--) {
       const h = history[i]
       if (!seen.has(h.url) && (h.url + ' ' + h.title).toLowerCase().includes(ql)) { seen.add(h.url); local.push({ url: h.url, title: h.title, kind: 'history' }) }
@@ -1133,7 +1332,7 @@ function setupIpc() {
     let remote = []
     try {
       const ctrl = new AbortController(); const to = setTimeout(() => ctrl.abort(), 1200)
-      const r = await net.fetch('https://suggestqueries.google.com/complete/search?client=chrome&hl=ar&q=' + encodeURIComponent(q), { signal: ctrl.signal, session: ses })
+      const r = await net.fetch('https://suggestqueries.google.com/complete/search?client=chrome&hl=' + LANG() + '&q=' + encodeURIComponent(q), { signal: ctrl.signal, session: ses })
       clearTimeout(to)
       const txt = await r.text()
       remote = (JSON.parse(txt)[1] || []).slice(0, 6)
@@ -1145,7 +1344,7 @@ function setupIpc() {
   // ── صفحات IBRA الداخلية ──
   const P = (e) => { const u = e.senderFrame?.url || e.sender.getURL(); if (!u.startsWith(PAGES_URL)) throw new Error('denied'); return winOfTab(e.sender) }
   const handle = (n, fn) => ipcMain.handle('page:' + n, (e, ...a) => { const w = P(e); return fn(w, e, ...a) })
-  handle('getSettings', () => ({ settings, blur: HAS_BLUR, ibdm: IBDM.cfg ? { version: IBDM.cfg.version } : null, engines: Object.fromEntries(Object.entries(ENGINES).map(([k, v]) => [k, v.name])), downloadsDir: downloadsDir() }))
+  handle('getSettings', (w) => ({ settings, incognito: !!w?.incognito, blur: HAS_BLUR, ibdm: IBDM.cfg ? { version: IBDM.cfg.version } : null, engines: Object.fromEntries(Object.entries(ENGINES).map(([k, v]) => [k, v.name])), downloadsDir: downloadsDir() }))
   handle('setSettings', (w, e, patch) => { setSettings(patch || {}); return settings })
   handle('resetSettings', () => { setSettings(Object.assign({}, DEFAULT_SETTINGS)); return settings })
   handle('history', (w, e, q) => {
@@ -1179,7 +1378,7 @@ function setupIpc() {
   handle('extensions', () => listExtensions())
   handle('removeExtension', async (w, e, id) => { await removeExtension(id); return listExtensions() })
   handle('loadUnpacked', async (w) => {
-    const r = await dialog.showOpenDialog(w?.win, { title: 'اختر مجلد الإضافة (يحتوي manifest.json)', properties: ['openDirectory'] })
+    const r = await showOpen(w?.win, { title: 'اختر مجلد الإضافة (يحتوي manifest.json)', properties: ['openDirectory'] })
     if (r.canceled || !r.filePaths[0]) return { ok: false }
     try {
       try { const m = JSON.parse(fs.readFileSync(path.join(r.filePaths[0], 'manifest.json'), 'utf8')); if (isIbdmExtension({ name: m.name })) return { ok: false, error: 'إضافة IBDM Pro مدمجة مسبقاً وتتحدث تلقائياً — لا حاجة لتحميلها' } } catch {}
@@ -1195,13 +1394,14 @@ function setupIpc() {
   })
   handle('updateExtensions', async () => { try { await require('electron-chrome-web-store').updateExtensions(ses); return true } catch { return false } })
   handle('chooseDownloadsDir', async (w) => {
-    const r = await dialog.showOpenDialog(w?.win, { properties: ['openDirectory', 'createDirectory'], defaultPath: downloadsDir() })
+    const r = await showOpen(w?.win, { properties: ['openDirectory', 'createDirectory'], defaultPath: downloadsDir() })
     if (!r.canceled && r.filePaths[0]) setSettings({ downloadsDir: r.filePaths[0] })
     return downloadsDir()
   })
   handle('clearData', async (w, e, o = {}) => {
-    if (o.history) { history = []; store.save('history', history) }
-    if (o.downloads) { downloadsList = downloadsList.filter(d => liveItems.has(d.id)); store.save('downloads', downloadsList); pushDownloads(true) }
+    const since = o.range > 0 ? Date.now() - o.range : 0
+    if (o.history) { history = since ? history.filter(h => h.time < since) : []; store.save('history', history) }
+    if (o.downloads) { downloadsList = downloadsList.filter(d => liveItems.has(d.id) || (since && d.start < since)); store.save('downloads', downloadsList); pushDownloads(true) }
     if (o.cache) await ses.clearCache()
     if (o.cookies) await ses.clearStorageData({ storages: ['cookies', 'localstorage', 'indexdb', 'websql', 'serviceworkers', 'cachestorage', 'shadercache', 'filesystem'] })
     if (o.permissions) { for (const k of Object.keys(sitePerms)) delete sitePerms[k]; store.save('permissions', sitePerms) }
@@ -1260,18 +1460,39 @@ function setupIpc() {
   handle('pwRemoveNever', (w, e, o) => { passwords.removeNever(o); return true })
   handle('pwImport', (w, e, text) => passwords.importCSV(String(text || '').slice(0, 20e6)))
   handle('pwImportFile', async (w) => {
-    const r = await dialog.showOpenDialog(w?.win, { title: 'اختر ملف كلمات السر (CSV) المصدّر من Chrome', filters: [{ name: 'CSV', extensions: ['csv'] }], properties: ['openFile'] })
+    const r = await showOpen(w?.win, { title: 'اختر ملف كلمات السر (CSV) المصدّر من Chrome', filters: [{ name: 'CSV', extensions: ['csv'] }], properties: ['openFile'] })
     if (r.canceled || !r.filePaths[0]) return null
     try { return passwords.importCSV(fs.readFileSync(r.filePaths[0], 'utf8')) } catch (err) { return { error: err.message } }
   })
   handle('pwExport', async (w) => {
-    const c = await dialog.showMessageBox(w?.win, { type: 'warning', buttons: ['تصدير', 'إلغاء'], defaultId: 1, cancelId: 1, title: 'IBRA CROM', message: 'تصدير كلمات السر', detail: 'سيُحفظ ملف فيه كل كلمات السر بشكل نص مكشوف. أي شخص يفتح الملف يستطيع قراءتها. احذفه بعد الاستخدام.' })
+    const c = await showMsg(w?.win, { type: 'warning', buttons: ['تصدير', 'إلغاء'], defaultId: 1, cancelId: 1, title: 'IBRA CROM', message: 'تصدير كلمات السر', detail: 'سيُحفظ ملف فيه كل كلمات السر بشكل نص مكشوف. أي شخص يفتح الملف يستطيع قراءتها. احذفه بعد الاستخدام.' })
     if (c.response !== 0) return false
-    const r = await dialog.showSaveDialog(w?.win, { defaultPath: path.join(app.getPath('documents'), 'IBRA CROM Passwords.csv'), filters: [{ name: 'CSV', extensions: ['csv'] }] })
+    const r = await showSave(w?.win, { defaultPath: path.join(app.getPath('documents'), 'IBRA CROM Passwords.csv'), filters: [{ name: 'CSV', extensions: ['csv'] }] })
     if (r.canceled || !r.filePath) return false
     fs.writeFileSync(r.filePath, '\uFEFF' + passwords.exportCSV()); return true
   })
   handle('openChromePasswords', () => { shell.openExternal('https://passwords.google.com/'); return true })
+  handle('tasks', () => {
+    const met = new Map(app.getAppMetrics().map(m => [m.pid, m]))
+    const rows = []
+    const used = new Set()
+    for (const w of windows) for (const t of w.tabs) {
+      const pid = t.wc.getOSProcessId(); const m = met.get(pid); used.add(pid)
+      rows.push({ id: t.wc.id, kind: w.incognito ? 'incognito' : t.proxied ? 'proxy' : 'tab', title: t.title || displayUrl(t), favicon: t.favicon || '', internal: !!internalName(t.wc.getURL()), pid, mem: m ? m.memory.workingSetSize : 0, cpu: m ? m.cpu.percentCPUUsage : 0 })
+    }
+    for (const [pid, m] of met) if (!used.has(pid)) rows.push({ id: 0, kind: m.type, title: ({ Browser: 'IBRA CROM', GPU: 'GPU', Utility: m.serviceName || 'Utility', Tab: 'إضافة أو صفحة في الخلفية' })[m.type] || m.type, pid, mem: m.memory.workingSetSize, cpu: m.cpu.percentCPUUsage })
+    return rows.sort((a, b) => b.mem - a.mem)
+  })
+  handle('taskKill', (w, e, id) => { const wc = webContents.fromId(+id); if (wc && !wc.isDestroyed()) { wc.forcefullyCrashRenderer(); return true } return false })
+  handle('lensImage', () => lensShot ? 'data:image/png;base64,' + lensShot.toString('base64') : null)
+  handle('bmMirror', () => ({ ...bmMirror.info(), profiles: bmMirror.profiles().map(p => ({ key: p.key, label: p.browserName + ' — ' + (p.email || p.name) })) }))
+  handle('bmMirrorSet', (w, e, patch) => { setSettings({ bmMirror: { ...(settings.bmMirror || {}), ...patch } }); bmMirror.load(); return bmMirror.info() })
+  handle('bmMirrorTree', (w, e, p) => bmMirror.children(Array.isArray(p) ? p.map(Number) : []))
+  handle('bmImportHtml', async (w) => {
+    const r = await showOpen(w?.win, { title: 'اختر ملف الإشارات (HTML) المصدّر من Chrome أو Google Takeout', filters: [{ name: 'HTML', extensions: ['html', 'htm'] }], properties: ['openFile'] })
+    if (r.canceled || !r.filePaths[0]) return null
+    try { return bmMirror.importHtml(fs.readFileSync(r.filePaths[0], 'utf8')) } catch (err) { return { ok: false, error: err.message } }
+  })
   handle('updateInfo', () => updater.info())
   handle('updateCheck', () => { updater.check(); return true })
   handle('updateDownload', () => { updater.download(); return true })
@@ -1283,10 +1504,41 @@ function setupIpc() {
   handle('openPath', (w, e, which) => { if (which === 'userData') shell.openPath(app.getPath('userData')); if (which === 'downloads') shell.openPath(downloadsDir()) })
 }
 
-function menuAction(w, a) {
+function menuAction(w, a, arg) {
   if (!w) return
   const t = w.active()
+  const cur = t ? displayUrl(t) : ''
+  const toast = (m) => w.ui.webContents.send('toast', m)
   const map = {
+    incognito: () => new IbraWindow({ incognito: true }),
+    installUpdate: () => updater.install(),
+    importPasswords: () => w.newTab('ibra://passwords'),
+    importBookmarks: () => { const r = importChromeBookmarks(); toast(r.found ? `تم استيراد ${r.added} إشارة مرجعية` : 'لم يتم العثور على متصفح كروم أو Edge على هذا الجهاز') },
+    bookmarkTab: () => toggleBookmark(w),
+    bookmarkAll: () => {
+      let n = 0
+      for (const x of w.tabs) { const u = displayUrl(x); if (/^https?:/.test(u) && !bookmarks.find(b => b.url === u)) { bookmarks.push({ id: Date.now() + n, title: x.title || u, url: u, favicon: x.favicon || '' }); n++ } }
+      store.save('bookmarks', bookmarks); broadcastState(); notifyPages('bookmarks'); toast(`تمت إضافة ${n} إشارة مرجعية`)
+    },
+    openUrl: () => { if (arg) t ? t.wc.loadURL(toLoadable(arg)).catch(() => {}) : w.newTab(arg) },
+    reopenIndex: () => reopenClosed(w, +arg || 0),
+    groupNew: () => { if (t) { const g = w.groupTabs([t.id]); w.ui.webContents.send('group:edit', g) } },
+    groupFocus: () => { const g = w.groups.get(arg); if (g) { w.setGroup(arg, { collapsed: false }); const f = w.tabs.find(x => x.groupId === arg); if (f) w.activate(f.id) } },
+    clearData: () => w.newTab('ibra://settings#clear'),
+    aiPanel: () => w.toggleAI(),
+    lensPage: async () => {
+      if (!t || !/^https?:/.test(cur)) return toast('افتح موقعاً أولاً ثم استخدم Google Lens')
+      const img = await t.wc.capturePage(); lensShot = img.toPNG(); w.newTab('ibra://lens', true, { afterActive: true })
+    },
+    translate: () => { if (/^https?:/.test(cur)) t.wc.loadURL(`https://translate.google.com/translate?sl=auto&tl=${LANG()}&hl=${LANG()}&u=${encodeURIComponent(cur)}`).catch(() => {}); else toast('لا يمكن ترجمة هذه الصفحة') },
+    edit_cut: () => t?.wc.cut(), edit_copy: () => t?.wc.copy(), edit_paste: () => t?.wc.paste(),
+    copyLink: () => { if (cur) { clipboard.writeText(cur); toast('تم نسخ الرابط') } },
+    qr: () => w.ui.webContents.send('qr:open'),
+    shortcut: () => createAppShortcut(w, t),
+    viewSource: () => { if (/^https?:/.test(cur)) w.newTab('view-source:' + cur, true, { afterActive: true }) },
+    whatsNew: () => w.newTab('https://github.com/ibrata2/IBRACROM/releases'),
+    reportIssue: () => w.newTab('https://github.com/ibrata2/IBRACROM/issues/new'),
+    telegram: () => w.newTab('https://t.me/ibraprogram'),
     newTab: () => { w.newTab('ibra://newtab'); focusAddress(w) },
     newWindow: () => new IbraWindow(),
     proxyTab: () => { if (settings.proxyEnabled !== false) { w.newTab('ibra://newtab', true, { proxied: true }); focusAddress(w) } },
@@ -1310,7 +1562,7 @@ function menuAction(w, a) {
     theme_light: () => setSettings({ theme: 'light' }),
     theme_dark: () => setSettings({ theme: 'dark' }),
     reopen: () => reopenClosed(w),
-    taskManager: () => showTaskManager(w),
+    taskManager: () => { const ex = w.tabs.find(x => internalName(x.wc.getURL()) === 'tasks'); if (ex) w.activate(ex.id); else w.newTab('ibra://tasks') },
     quit: () => { saveSession(); app.quit() },
   }
   map[a]?.()
@@ -1320,8 +1572,31 @@ function showTaskManager(w) {
   const m = app.getAppMetrics()
   const lines = m.map(p => `${p.type.padEnd(10)}  PID ${p.pid}  CPU ${p.cpu.percentCPUUsage.toFixed(1)}%  RAM ${(p.memory.workingSetSize / 1024).toFixed(0)} MB`)
   const total = m.reduce((s, p) => s + p.memory.workingSetSize, 0) / 1024
-  dialog.showMessageBox(w.win, { title: 'مدير المهام', message: `إجمالي الذاكرة: ${total.toFixed(0)} MB — العمليات: ${m.length}`, detail: lines.join('\n') })
+  showMsg(w.win, { title: 'مدير المهام', message: `إجمالي الذاكرة: ${total.toFixed(0)} MB — العمليات: ${m.length}`, detail: lines.join('\n') })
 }
+
+// ═════════════════ اختصار الموقع كتطبيق ═════════════════
+function createAppShortcut(w, t) {
+  const toast = (m) => w.ui.webContents.send('toast', m)
+  const u = t ? displayUrl(t) : ''
+  if (!/^https?:/.test(u)) return toast('افتح موقعاً أولاً')
+  if (process.platform !== 'win32') return toast('الاختصار متاح على ويندوز فقط')
+  const name = (t.title || new URL(u).hostname).replace(/[\\/:*?"<>|]/g, ' ').trim().slice(0, 60) || 'IBRA CROM App'
+  const lnk = path.join(app.getPath('desktop'), name + '.lnk')
+  const ok = shell.writeShortcutLink(lnk, 'create', { target: process.execPath, args: '--app=' + u, description: name + ' — IBRA CROM', icon: process.execPath, iconIndex: 0 })
+  toast(ok ? 'تم إنشاء اختصار على سطح المكتب: ' + name : 'تعذر إنشاء الاختصار')
+}
+// نافذة تطبيق: الموقع وحده بدون شريط المتصفح
+function openAppWindow(url) {
+  const aw = new BrowserWindow({ width: 1100, height: 760, icon: ICON, autoHideMenuBar: true, backgroundColor: '#ffffff', title: 'IBRA CROM',
+    webPreferences: { session: ses, preload: PRELOAD_PAGE, sandbox: true, contextIsolation: true, spellcheck: true } })
+  aw.setMenuBarVisibility(false)
+  aw.webContents.setWindowOpenHandler((d) => { const w = focusedWin() || new IbraWindow({ urls: [] }); w.newTab(d.url); w.win.focus(); return { action: 'deny' } })
+  aw.webContents.on('context-menu', (e, p) => { const w = focusedWin(); if (w) showContextMenu(w, { wc: aw.webContents }, p) })
+  aw.webContents.loadURL(url).catch(() => {})
+  return aw
+}
+const appUrlFromArgv = (argv) => { const a = argv.find(x => /^--app=/.test(x)); const u = a ? a.slice(6).replace(/^"|"$/g, '') : ''; return /^https?:/i.test(u) ? u : '' }
 
 // ═════════════════ فتح روابط من سطر الأوامر ═════════════════
 function urlsFromArgv(argv) {
@@ -1335,6 +1610,8 @@ function urlsFromArgv(argv) {
 }
 
 app.on('second-instance', (e, argv) => {
+  const appUrl = appUrlFromArgv(argv)
+  if (appUrl) return openAppWindow(appUrl)
   const urls = urlsFromArgv(argv)
   const w = focusedWin()
   if (!w) return new IbraWindow({ urls })
@@ -1368,17 +1645,19 @@ function setupFeatures() {
       const msg = ready ? `التحديث ${version} جاهز — أعد تشغيل IBRA CROM لتثبيته` : `يتوفر إصدار جديد من IBRA CROM: ${version}`
       for (const w of windows) w.ui.webContents.send('toast', msg)
       if (Notification.isSupported()) {
-        const n = new Notification({ title: 'IBRA CROM', body: msg + (ready ? '' : '\nاضغط زر «تحديث» في شريط الأدوات'), icon: path.join(__dirname, 'assets', 'logo.png') })
+        const n = notif({ title: 'IBRA CROM', body: msg + (ready ? '' : '\nاضغط زر «تحديث» في شريط الأدوات'), icon: path.join(__dirname, 'assets', 'logo.png') })
         n.on('click', () => { const w = focusedWin(); if (w) { if (w.win.isMinimized()) w.win.restore(); w.win.focus(); w.ui.webContents.send('update:open') } })
         n.show()
       }
     },
   })
   updater.init()
+  bmMirror = createMirror(ctx)
+  bmMirror.load()
   proxy = createProxy(ctx)
   adblock = createAdblock(ctx)
   shield = createShield(ctx)
-  proxy.session.setUserAgent(chromeUA)
+  proxy.session.setUserAgent(chromeUA, acceptLang())
   adblock.init()
   shield.init()
   for (const s of [ses, proxy.session]) { if (!process.env.IBRA_NO_NETPIPE) attachNetPipeline(s); adblock.attach(s) }
@@ -1441,7 +1720,8 @@ app.on('login', (e, wc, details, authInfo, cb) => {
 
 app.whenReady().then(async () => {
   ses = session.fromPartition('persist:ibracrom')
-  ses.setUserAgent(chromeUA)
+  ses.setUserAgent(chromeUA, acceptLang())
+  lastLang = LANG()
   setupFeatures()
   setupPermissions()
   setupDownloads()
@@ -1450,6 +1730,8 @@ app.whenReady().then(async () => {
   Menu.setApplicationMenu(null)
 
   const argvUrls = urlsFromArgv(process.argv)
+  const appUrl = appUrlFromArgv(process.argv)
+  if (appUrl) { openAppWindow(appUrl); if (process.env.IBRA_TEST_SHOT) require(process.env.IBRA_TEST_FILE || './test-shot')(windows, { setSettings, menuAction }); return }
   const sessionData = store.load('session', [])
   if (settings.startup === 'restore' && sessionData.length && sessionData.some(s => s.length)) {
     sessionData.forEach((urls, i) => { if (urls.length) new IbraWindow({ urls: i === 0 ? urls.concat(argvUrls) : urls }) })
