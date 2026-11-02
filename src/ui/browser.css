@@ -333,3 +333,13 @@ body.overlay-on #overlay { display: block; }
 .mbar input[type=range]:disabled { opacity: .5; }
 .mempty { color: var(--muted); text-align: center; padding: 26px 10px; }
 .mfoot2 { display: flex; align-items: center; justify-content: space-between; padding: 10px 6px 2px; font-size: 12px; color: var(--muted); }
+
+/* ═════════ كلمات السر ═════════ */
+#pwkey { color: var(--red); }
+#pwkey.pulse { animation: pulse 1s var(--ease) 2; }
+.pwf { display: grid; grid-template-columns: 90px 1fr; gap: 8px; align-items: center; margin: 4px 0 10px; font-size: 12.5px; }
+.pwf span { color: var(--muted); }
+.pwf input { height: 32px; border-radius: 9px; border: 1px solid var(--line-strong); background: var(--field-bg-focus); color: var(--text); padding: 0 10px; font: inherit; outline: 0; direction: ltr; text-align: right; min-width: 0; }
+.pwf input:focus { border-color: var(--red); box-shadow: 0 0 0 3px var(--red-glow); }
+.pwf .pv { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.pwf .pv input { flex: 1; }

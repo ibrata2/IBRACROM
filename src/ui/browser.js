@@ -72,6 +72,7 @@ function render() {
   renderFeatures()
   renderUpdate()
   renderMediaBtn()
+  renderPw()
   renderBookmarks()
   renderClosed()
 }
@@ -220,7 +221,7 @@ function markSel() {
 }
 
 // ═════════ اللوحات ═════════
-const PANELS = ['suggest', 'menu', 'dlpanel', 'closedpanel', 'proxypanel', 'shieldpanel', 'updpanel', 'mediapanel']
+const PANELS = ['suggest', 'menu', 'dlpanel', 'closedpanel', 'proxypanel', 'shieldpanel', 'updpanel', 'mediapanel', 'pwpanel']
 function anyOpen() { return PANELS.some(id => !$(id).hidden) }
 function syncOverlay() {
   const on = anyOpen()
@@ -271,6 +272,7 @@ function buildMenu() {
     item('devtools', I.code, 'أدوات المطور', 'F12'),
     item('taskManager', I.cpu, 'مدير المهام'),
     sep,
+    item('passwords', I.key, 'كلمات السر'),
     item('settings', I.settings, 'الإعدادات'),
     item('checkUpdate', I.update, S.update?.status === 'available' || S.update?.status === 'ready' ? `تحديث إلى ${esc(S.update.version)} متوفر` : 'البحث عن تحديثات'),
     item('about', I.info, 'حول IBRA CROM'),
@@ -592,6 +594,33 @@ $('mediabtn').onclick = async () => {
   await refreshMedia()
   clearInterval(mediaTimer); mediaTimer = setInterval(refreshMedia, 1000)
 }
+
+// ═════════ حفظ كلمة السر ═════════
+$('pwkey').innerHTML = I.key
+let pwShownFor = ''
+function renderPw() {
+  const P = (S.nav || {}).pw
+  const k = $('pwkey')
+  k.hidden = !P
+  if (!P) { if (!$('pwpanel').hidden) closePanels(); pwShownFor = ''; return }
+  const key = S.activeId + '|' + P.site + '|' + P.username
+  if (P.auto && pwShownFor !== key) { pwShownFor = key; api.send('pw:shown'); setTimeout(openPw, 60) }
+}
+function openPw() {
+  const P = (S.nav || {}).pw; if (!P) return
+  const p = $('pwpanel')
+  p.innerHTML = `<div class="fp-h"><span class="fic">${I.key}</span><div><b>${P.update ? 'تحديث كلمة السر؟' : 'حفظ كلمة السر؟'}</b><small dir="ltr" style="text-align:right">${esc(P.site)}</small></div></div>
+    <div class="pwf"><span>اسم المستخدم</span><input id="pw-u" value="${esc(P.username)}" spellcheck="false"><span>كلمة السر</span><div class="pv"><input id="pw-p" type="password" value="••••••••" disabled></div></div>
+    <div class="fp-links"><button id="pw-s" class="primary">${P.update ? 'تحديث' : 'حفظ'}</button><button id="pw-n">${P.update ? 'لا' : 'أبداً لهذا الموقع'}</button><button id="pw-x">ليس الآن</button></div>
+    <div class="fp-note">كلمات السر تُحفظ مشفّرة على جهازك فقط، وتُملأ تلقائياً في المرة القادمة.</div>`
+  p.querySelector('#pw-s').onclick = () => { api.send('pw:save', p.querySelector('#pw-u').value); closePanels() }
+  p.querySelector('#pw-n').onclick = () => { api.send(P.update ? 'pw:dismiss' : 'pw:never'); closePanels() }
+  p.querySelector('#pw-x').onclick = () => { api.send('pw:dismiss'); closePanels() }
+  const r = $('pwkey').getBoundingClientRect()
+  p.style.top = (r.bottom + 8) + 'px'; p.style.left = Math.max(8, Math.min(r.left - 150, innerWidth - 345)) + 'px'
+  showPanel('pwpanel')
+}
+$('pwkey').onclick = () => { if (!$('pwpanel').hidden) return closePanels(); openPw() }
 
 api.send('ui:ready')
 api.send('ui:height', frame.offsetHeight)

@@ -241,3 +241,21 @@ body.danger-page { background: linear-gradient(180deg, rgba(220,38,38,.10), tran
 .pwbar { height: 6px; border-radius: 6px; background: var(--line); overflow: hidden; margin: 16px 0; max-width: 420px; }
 .pwbar i { display: block; height: 100%; width: 4%; background: linear-gradient(90deg, var(--red-deep), var(--red)); transition: width .4s; }
 .pwbar i.err { background: #9ca3af; }
+
+/* ═════════ كلمات السر ═════════ */
+.gacc { display: flex; align-items: center; gap: 16px; padding: 18px 20px; flex-wrap: wrap; }
+.gacc .gic { width: 46px; height: 46px; border-radius: 12px; background: #fff; display: grid; place-items: center; box-shadow: 0 2px 8px rgba(0,0,0,.12); flex: none; }
+.gacc .gic svg { width: 26px; height: 26px; }
+.gacc .rt { flex: 1; min-width: 260px; }
+.gacc .rt > b { display: block; margin-bottom: 4px; }
+.gacc .rt span { color: var(--muted); font-size: 12.5px; line-height: 1.8; }
+.gacc .gbtns { display: flex; gap: 8px; flex-wrap: wrap; }
+.pwrow { display: flex; align-items: center; gap: 10px; padding: 10px 16px; }
+.pwrow + .pwrow { border-top: 1px solid var(--line); }
+.pwrow:hover { background: var(--hover); }
+.pwrow img, .pwrow .gl { width: 22px; height: 22px; border-radius: 5px; flex: none; color: var(--muted); }
+.pwrow .pws { flex: 1; min-width: 0; }
+.pwrow .pws b, .pwrow .pws small { display: block; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pwrow .pws small { color: var(--muted); }
+.pwrow .pwv { font-family: Consolas, monospace; color: var(--muted); min-width: 120px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pwrow .pwv[data-on] { color: var(--text); }

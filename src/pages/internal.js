@@ -20,6 +20,7 @@ const NAV = [
   ['downloads', 'التنزيلات', 'download'],
   ['bookmarks', 'الإشارات المرجعية', 'bookmark'],
   ['extensions', 'الإضافات', 'puzzle'],
+  ['passwords', 'كلمات السر', 'key'],
   ['about', 'حول IBRA CROM', 'info'],
 ]
 function shell(active, inner) {
@@ -41,7 +42,7 @@ async function render() {
   document.title = TITLES[r] || 'IBRA CROM'
   await fn()
 }
-const TITLES = { newtab: 'علامة تبويب جديدة', settings: 'الإعدادات', history: 'السجل', downloads: 'التنزيلات', bookmarks: 'الإشارات المرجعية', extensions: 'الإضافات', about: 'حول IBRA CROM', error: 'تعذر الوصول', blocked: 'موقع خطير!', proxywait: 'جاري الاتصال بالبروكسي…' }
+const TITLES = { newtab: 'علامة تبويب جديدة', settings: 'الإعدادات', history: 'السجل', downloads: 'التنزيلات', bookmarks: 'الإشارات المرجعية', extensions: 'الإضافات', about: 'حول IBRA CROM', error: 'تعذر الوصول', blocked: 'موقع خطير!', passwords: 'كلمات السر', proxywait: 'جاري الاتصال بالبروكسي…' }
 window.addEventListener('hashchange', render)
 ibra.onChanged(async (what) => {
   if (what === 'settings') { await loadCfg(); if (route() === 'settings' || route() === 'newtab') render() }
@@ -49,6 +50,7 @@ ibra.onChanged(async (what) => {
   if (what === 'features' && route() === 'extensions') render()
   if (what === 'features' && route() === 'about') drawUpdateStatus()
   if ((what === 'features' || what === 'settings') && route() === 'settings') refreshProxyStatus()
+  if (what === 'passwords' && route() === 'passwords') render()
   if (what === 'bookmarks' && (route() === 'bookmarks' || route() === 'newtab')) render()
 })
 
@@ -336,6 +338,72 @@ PAGES.extensions = async () => {
     c.querySelector('[data-r]')?.addEventListener('click', async () => { if (confirm('إزالة هذه الإضافة؟')) { await ibra.removeExtension(id); render() } })
     c.querySelector('[data-o]')?.addEventListener('click', () => ibra.openExtensionOptions(id))
   })
+}
+
+// ═════════ كلمات السر ═════════
+PAGES.passwords = async (q = '') => {
+  const d = await ibra.pwList()
+  const ql = q.toLowerCase()
+  const items = d.items.filter(x => !ql || (x.site + ' ' + x.username).toLowerCase().includes(ql))
+  const fav = (o) => 'https://www.google.com/s2/favicons?sz=64&domain=' + encodeURIComponent(new URL(o).hostname)
+  app.innerHTML = shell('passwords', `<h1>كلمات السر</h1>
+    <div class="card gacc"><span class="gic">${I.google}</span><div class="rt"><b>تنقل كلمات السر والإشارات من حساب Google Chrome</b>
+      <span>1) افتح <b>passwords.google.com</b> ← الإعدادات ← <b>تصدير كلمات السر</b> (أو في Chrome: الإعدادات ← كلمات السر ← تصدير)، ثم اختر الملف هنا بزر «استيراد من Chrome».<br>2) الإشارات المرجعية: من صفحة الإشارات ← «استيراد من جوجل كروم».</span></div>
+      <div class="gbtns"><button class="btn primary" id="imp">${I.upload} استيراد من Chrome (CSV)</button><button class="btn" id="gpm">فتح passwords.google.com</button></div></div>
+    <div class="card" style="margin-top:14px">
+      <div class="row"><div class="rt"><b>عرض حفظ كلمات السر</b><span>يسألك IBRA CROM بعد تسجيل الدخول هل تريد حفظ كلمة السر</span></div><label class="switch"><input type="checkbox" data-k="passwordsOffer" ${d.offer ? 'checked' : ''}><i></i></label></div>
+      <div class="row"><div class="rt"><b>الملء التلقائي</b><span>يملأ اسم المستخدم وكلمة السر تلقائياً عند فتح صفحة تسجيل الدخول</span></div><label class="switch"><input type="checkbox" data-k="passwordsAutofill" ${d.autofill ? 'checked' : ''}><i></i></label></div>
+    </div>
+    <div class="toolbar" style="margin-top:18px"><input type="search" id="pq" placeholder="ابحث عن موقع أو اسم مستخدم" value="${esc(q)}"><button class="btn" id="add">${I.plus} إضافة</button><button class="btn" id="exp">تصدير</button></div>
+    <h2>${d.items.length ? `كلمات السر المحفوظة (${d.items.length})` : 'لا توجد كلمات سر محفوظة بعد'}</h2>
+    <div class="card" id="pl">${items.length ? items.map(x => `<div class="pwrow" data-id="${x.id}">
+        <img src="${esc(fav(x.origin))}" alt=""><div class="pws"><b dir="ltr">${esc(x.site)}</b><small dir="ltr">${esc(x.username || '(بدون اسم مستخدم)')}</small></div>
+        <span class="pwv" dir="ltr">••••••••••</span>
+        <button class="ibtn" data-a="eye" title="إظهار">${I.eye}</button><button class="ibtn" data-a="cu" title="نسخ اسم المستخدم">${I.copy}</button>
+        <button class="ibtn" data-a="cp" title="نسخ كلمة السر">${I.key}</button><button class="ibtn" data-a="ed" title="تعديل">${I.edit}</button><button class="ibtn" data-a="rm" title="حذف">${I.trash}</button></div>`).join('')
+      : `<div class="empty">${I.key}<br>${q ? 'لا توجد نتائج' : 'سجّل الدخول لأي موقع وسيسألك IBRA CROM عن الحفظ، أو استورد كلمات السر من Chrome.'}</div>`}</div>
+    ${d.never.length ? `<h2>مواقع لا تُحفظ كلمات سرها أبداً</h2><div class="card">${d.never.map(o => `<div class="hrow"><div class="ht"><a dir="ltr">${esc(o)}</a></div><button class="ibtn" data-never="${esc(o)}" title="إزالة">${I.close}</button></div>`).join('')}</div>` : ''}`)
+  app.querySelectorAll('.pwrow img').forEach(i => i.addEventListener('error', () => i.replaceWith(h(`<span class="gl">${I.globe}</span>`))))
+  app.querySelectorAll('input[data-k]').forEach(c => c.addEventListener('change', () => ibra.setSettings({ [c.dataset.k]: c.checked })))
+  app.querySelector('#imp').addEventListener('click', async () => {
+    const r = await ibra.pwImportFile(); if (!r) return
+    if (r.error) return toast('تعذر قراءة الملف: ' + r.error)
+    toast(`تم الاستيراد: ${r.added} جديدة، ${r.updated} محدّثة${r.skipped ? '، ' + r.skipped + ' متجاهلة' : ''}`); PAGES.passwords()
+  })
+  app.querySelector('#gpm').addEventListener('click', () => ibra.openTab('https://passwords.google.com/'))
+  app.querySelector('#exp').addEventListener('click', async () => { if (await ibra.pwExport()) toast('تم تصدير كلمات السر') })
+  app.querySelector('#add').addEventListener('click', () => pwEditor(null))
+  let t; const pq = app.querySelector('#pq')
+  pq.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => PAGES.passwords(pq.value).then(() => { const n = app.querySelector('#pq'); n.focus(); n.setSelectionRange(n.value.length, n.value.length) }), 200) })
+  app.querySelectorAll('[data-never]').forEach(b => b.addEventListener('click', async () => { await ibra.pwRemoveNever(b.dataset.never); PAGES.passwords(q) }))
+  app.querySelectorAll('.pwrow').forEach(row => {
+    const id = +row.dataset.id, x = d.items.find(y => y.id === id)
+    row.querySelectorAll('[data-a]').forEach(b => b.addEventListener('click', async () => {
+      const a = b.dataset.a
+      if (a === 'eye') { const v = row.querySelector('.pwv'); if (v.dataset.on) { v.textContent = '••••••••••'; delete v.dataset.on; b.innerHTML = I.eye } else { v.textContent = await ibra.pwReveal(id); v.dataset.on = 1; b.innerHTML = I.eyeOff } }
+      if (a === 'cu') { await navigator.clipboard.writeText(x.username || ''); toast('تم نسخ اسم المستخدم') }
+      if (a === 'cp') { await navigator.clipboard.writeText(await ibra.pwReveal(id)); toast('تم نسخ كلمة السر') }
+      if (a === 'ed') pwEditor(x)
+      if (a === 'rm' && confirm('حذف كلمة السر المحفوظة لـ ' + x.site + '؟')) { await ibra.pwRemove(id); PAGES.passwords(q) }
+    }))
+  })
+}
+async function pwEditor(x) {
+  const m = h(`<div class="modal-bg"><div class="modal"><h3>${x ? 'تعديل كلمة السر — ' + esc(x.site) : 'إضافة كلمة سر'}</h3>
+    ${x ? '' : '<label>الموقع</label><input type="url" id="mo" dir="ltr" placeholder="https://example.com">'}
+    <label>اسم المستخدم</label><input type="text" id="mu" dir="ltr" value="${esc(x ? x.username : '')}">
+    <label>كلمة السر</label><input type="text" id="mp" dir="ltr" value="" placeholder="${x ? 'اتركها فارغة لعدم التغيير' : ''}">
+    <div class="mf"><button class="btn primary" id="ms">حفظ</button><button class="btn" id="mc">إلغاء</button></div></div></div>`)
+  document.body.appendChild(m)
+  if (x) m.querySelector('#mp').value = await ibra.pwReveal(x.id)
+  m.querySelector('#mc').onclick = () => m.remove()
+  m.addEventListener('mousedown', (e) => { if (e.target === m) m.remove() })
+  m.querySelector('#ms').onclick = async () => {
+    const u = m.querySelector('#mu').value, p = m.querySelector('#mp').value
+    if (x) await ibra.pwEdit(x.id, u, p)
+    else if (!(await ibra.pwAdd(m.querySelector('#mo').value.trim(), u, p))) return toast('أدخل عنوان الموقع وكلمة السر')
+    m.remove(); toast('تم الحفظ'); PAGES.passwords()
+  }
 }
 
 // ═════════ إعدادات البروكسي ═════════

@@ -16,6 +16,7 @@ const createShield = require('./features/shield')
 const createProxy = require('./features/proxy')
 const createUpdater = require('./features/updater')
 const media = require('./features/media')()
+const passwords = require('./features/passwords')(store)
 const { resolveIbdm, checkGithub, isIbdmExtension, newer: verNewer } = require('./features/ibdm-ext')
 
 app.setName('IBRA CROM')
@@ -37,7 +38,7 @@ const PAGES_HTML = path.join(__dirname, 'pages', 'internal.html')
 const PAGES_URL = pathToFileURL(PAGES_HTML).href
 const PRELOAD_UI = path.join(__dirname, 'preload-ui.js')
 const PRELOAD_PAGE = path.join(__dirname, 'preload-page.js')
-const INTERNAL_PAGES = ['newtab', 'settings', 'history', 'bookmarks', 'downloads', 'extensions', 'about', 'error', 'blocked', 'proxywait']
+const INTERNAL_PAGES = ['newtab', 'settings', 'history', 'bookmarks', 'downloads', 'extensions', 'passwords', 'about', 'error', 'blocked', 'proxywait']
 const VENDOR_DIR = app.isPackaged ? path.join(process.resourcesPath, 'vendor') : path.join(__dirname, '..', 'vendor')
 
 // ── البيانات ──
@@ -52,6 +53,7 @@ const DEFAULT_SETTINGS = {
   askWhereToSave: false,
   restoreZoom: true,
   ibdmCapture: true, // تسليم التحميلات لبرنامج IBDM Pro عندما يكون مشغّلاً
+  passwordsOffer: true, passwordsAutofill: true,
   // ── الإضافات المدمجة ──
   adblockEnabled: true, adblockAllow: [],
   shieldEnabled: true, shieldScanDownloads: true,
@@ -163,6 +165,28 @@ class IbraWindow {
     this.win.contentView.addChildView(this.ui)
     this.ui.webContents.loadFile(UI_HTML)
     this.ui.webContents.on('before-input-event', (e, input) => { if (handleShortcut(this, input)) e.preventDefault() })
+    // قائمة النقر اليمين لشريط العنوان وشريط البحث (نسخ/لصق...)
+    this.ui.webContents.on('context-menu', (e, p) => {
+      if (!p.isEditable) return
+      const clip = clipboard.readText().trim()
+      const items = [
+        { label: 'تراجع', role: 'undo', enabled: p.editFlags.canUndo },
+        { label: 'إعادة', role: 'redo', enabled: p.editFlags.canRedo },
+        { type: 'separator' },
+        { label: 'قص', role: 'cut', enabled: p.editFlags.canCut },
+        { label: 'نسخ', role: 'copy', enabled: p.editFlags.canCopy },
+        { label: 'لصق', role: 'paste', enabled: p.editFlags.canPaste },
+      ]
+      if (clip && p.inputFieldType !== 'password') {
+        const isUrl = /^(https?:\/\/|www\.)\S+$/i.test(clip) || /^[^\s/]+\.[a-z]{2,}(\/\S*)?$/i.test(clip)
+        items.push({ label: isUrl ? 'لصق والانتقال' : 'لصق والبحث', click: () => { const t = this.active(); if (t) { t.wc.loadURL(toLoadable(clip)).catch(() => {}); t.wc.focus() } } })
+      }
+      items.push({ type: 'separator' }, { label: 'تحديد الكل', role: 'selectAll' })
+      const t = this.active()
+      const cur = t ? displayUrl(t) : ''
+      if (cur && /^https?:/.test(cur)) items.push({ type: 'separator' }, { label: 'نسخ رابط الصفحة', click: () => clipboard.writeText(cur) })
+      Menu.buildFromTemplate(items).popup({ window: this.win })
+    })
     this.ui.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
 
     this.win.on('resize', () => this.layout())
@@ -265,6 +289,8 @@ class IbraWindow {
     wc.on('media-paused', () => { tab.audible = false; upd() })
     wc.on('did-start-navigation', (e) => {
       if (e.isMainFrame && !e.isSameDocument) {
+        const g = GOOGLE_LOGIN.test(e.url)
+        if (g !== !!tab.googleUA) { tab.googleUA = g; wc.setUserAgent(g ? FIREFOX_UA : chromeUA) }
         this.applyBg(tab, e.url)
         if (!internalName(e.url)) tab.favicon = ''
         if (internalName(e.url) !== 'proxywait') tab.pendingUrl = ''
@@ -413,7 +439,7 @@ class IbraWindow {
         canBack: a.wc.navigationHistory.canGoBack(), canForward: a.wc.navigationHistory.canGoForward(),
         url: durl, secure: durl.startsWith('https://') && internalName(a.wc.getURL()) !== 'error', error: internalName(a.wc.getURL()) === 'error', internal: !!internalName(a.wc.getURL()) && internalName(a.wc.getURL()) !== 'error',
         bookmarked: !!bookmarks.find(b => b.url === durl), zoom: Math.round(100 * Math.pow(1.2, a.wc.getZoomLevel())),
-        tabId: a.wc.id, loading: a.loading, proxied: !!a.proxied, partition: a.proxied ? proxy.partition : '',
+        tabId: a.wc.id, loading: a.loading, proxied: !!a.proxied, pw: a.pwPending ? { site: a.pwPending.site, username: a.pwPending.username, update: a.pwPending.update, auto: !a.pwPending.shown } : null, partition: a.proxied ? proxy.partition : '',
         blocked: internalName(a.wc.getURL()) === 'blocked', wait: internalName(a.wc.getURL()) === 'proxywait',
         ads: adblock ? adblock.tabCount(a.wc.id) : 0, host: (() => { try { return /^https?:/.test(durl) ? new URL(durl).hostname : '' } catch { return '' } })(),
       }
@@ -449,7 +475,7 @@ function reopenClosed(w, index = 0) {
 }
 
 function pageTitle(n) {
-  return ({ blocked: 'موقع خطير!', proxywait: 'جاري الاتصال بالبروكسي…', newtab: 'علامة تبويب جديدة', settings: 'الإعدادات', history: 'السجل', bookmarks: 'الإشارات المرجعية', downloads: 'التنزيلات', extensions: 'الإضافات', about: 'حول IBRA CROM', error: 'تعذر الوصول' })[n] || 'IBRA CROM'
+  return ({ blocked: 'موقع خطير!', proxywait: 'جاري الاتصال بالبروكسي…', newtab: 'علامة تبويب جديدة', settings: 'الإعدادات', history: 'السجل', bookmarks: 'الإشارات المرجعية', downloads: 'التنزيلات', extensions: 'الإضافات', passwords: 'كلمات السر', about: 'حول IBRA CROM', error: 'تعذر الوصول' })[n] || 'IBRA CROM'
 }
 
 function winOf(bw) { for (const w of windows) if (w.win === bw) return w }
@@ -996,6 +1022,34 @@ function setupIpc() {
   ipcMain.on('tab:reopen', (e, index) => { const w = W(e); if (w) reopenClosed(w, index | 0) })
   ipcMain.on('tab:reopen-all', (e) => { const w = W(e); if (!w) return; while (closedTabs.length) reopenClosed(w, 0) })
   ipcMain.on('ibdm:show', () => ibdmReq('POST', '/show', {}))
+  // ── IBRA Passwords ──
+  const pageOrigin = (e) => { const o = e.senderFrame?.origin || ''; return /^https?:\/\//.test(o) ? o : '' }
+  ipcMain.handle('pw:get', (e) => {
+    const o = pageOrigin(e)
+    if (!o || settings.passwordsAutofill === false || !winOfTab(e.sender)) return []
+    return passwords.credentialsFor(o)
+  })
+  ipcMain.on('pw:used', (e, id) => { if (pageOrigin(e)) passwords.markUsed(id) })
+  ipcMain.on('pw:captured', (e, d) => {
+    const o = pageOrigin(e); const w = winOfTab(e.sender)
+    if (!o || !w || settings.passwordsOffer === false || !d || typeof d.password !== 'string') return
+    const p = passwords.captured(o, String(d.username || '').slice(0, 300), d.password.slice(0, 1000))
+    if (!p) return
+    const t = w.byWc(e.sender); if (!t) return
+    t.pwPending = p
+    w.sendState()
+  })
+  const pend = (e) => { const w = W(e); const t = w?.active(); return t && t.pwPending ? [w, t] : [] }
+  ipcMain.on('pw:save', (e, username) => {
+    const [w, t] = pend(e); if (!t) return
+    if (typeof username === 'string') t.pwPending.username = username.slice(0, 300)
+    passwords.upsert(t.pwPending); t.pwPending = null; w.sendState(); notifyPages('passwords')
+    w.ui.webContents.send('toast', 'تم حفظ كلمة السر في IBRA CROM')
+  })
+  ipcMain.on('pw:never', (e) => { const [w, t] = pend(e); if (!t) return; passwords.neverFor(t.pwPending.origin); t.pwPending = null; w.sendState() })
+  ipcMain.on('pw:dismiss', (e) => { const [w, t] = pend(e); if (!t) return; t.pwPending = null; w.sendState() })
+  ipcMain.on('pw:shown', (e) => { const [w, t] = pend(e); if (t) t.pwPending.shown = true })
+
   // ── IBRA Media ──
   ipcMain.handle('media:list', async () => {
     const out = []
@@ -1198,6 +1252,26 @@ function setupIpc() {
   })
   handle('proxyRetry', () => proxy.restart())
   handle('proxyCancelTab', (w, e) => { const t = w?.byWc(e.sender); if (t) w.setTabProxy(t.id, false) })
+  handle('pwList', () => ({ items: passwords.all(), never: passwords.never(), offer: settings.passwordsOffer !== false, autofill: settings.passwordsAutofill !== false }))
+  handle('pwReveal', (w, e, id) => passwords.reveal(id))
+  handle('pwRemove', (w, e, id) => { passwords.remove(id); return true })
+  handle('pwEdit', (w, e, id, u, p) => { passwords.edit(id, u, p); return true })
+  handle('pwAdd', (w, e, url, u, p) => { const o = passwords.originOf(/^https?:/i.test(url) ? url : 'https://' + url); if (!o || !p) return false; passwords.upsert({ origin: o, username: u || '', password: p }); return true })
+  handle('pwRemoveNever', (w, e, o) => { passwords.removeNever(o); return true })
+  handle('pwImport', (w, e, text) => passwords.importCSV(String(text || '').slice(0, 20e6)))
+  handle('pwImportFile', async (w) => {
+    const r = await dialog.showOpenDialog(w?.win, { title: 'اختر ملف كلمات السر (CSV) المصدّر من Chrome', filters: [{ name: 'CSV', extensions: ['csv'] }], properties: ['openFile'] })
+    if (r.canceled || !r.filePaths[0]) return null
+    try { return passwords.importCSV(fs.readFileSync(r.filePaths[0], 'utf8')) } catch (err) { return { error: err.message } }
+  })
+  handle('pwExport', async (w) => {
+    const c = await dialog.showMessageBox(w?.win, { type: 'warning', buttons: ['تصدير', 'إلغاء'], defaultId: 1, cancelId: 1, title: 'IBRA CROM', message: 'تصدير كلمات السر', detail: 'سيُحفظ ملف فيه كل كلمات السر بشكل نص مكشوف. أي شخص يفتح الملف يستطيع قراءتها. احذفه بعد الاستخدام.' })
+    if (c.response !== 0) return false
+    const r = await dialog.showSaveDialog(w?.win, { defaultPath: path.join(app.getPath('documents'), 'IBRA CROM Passwords.csv'), filters: [{ name: 'CSV', extensions: ['csv'] }] })
+    if (r.canceled || !r.filePath) return false
+    fs.writeFileSync(r.filePath, '\uFEFF' + passwords.exportCSV()); return true
+  })
+  handle('openChromePasswords', () => { shell.openExternal('https://passwords.google.com/'); return true })
   handle('updateInfo', () => updater.info())
   handle('updateCheck', () => { updater.check(); return true })
   handle('updateDownload', () => { updater.download(); return true })
@@ -1223,6 +1297,7 @@ function menuAction(w, a) {
     store: () => w.newTab('https://chromewebstore.google.com/'),
     settings: () => w.newTab('ibra://settings'),
     about: () => w.newTab('ibra://about'),
+    passwords: () => w.newTab('ibra://passwords'),
     checkUpdate: () => { updater.check(); w.ui.webContents.send('update:open') },
     print: () => t?.wc.print(),
     find: () => w.ui.webContents.send('find:open'),
@@ -1273,6 +1348,13 @@ app.on('web-contents-created', (e, wc) => {
   wc.on('will-attach-webview', (ev) => ev.preventDefault())
 })
 
+// هوية Firefox حديثة (يتغير رقم الإصدار تلقائياً مع الوقت كما يصدر Firefox كل 4 أسابيع)
+const FIREFOX_UA = (() => {
+  const v = 128 + Math.floor((Date.now() - Date.UTC(2024, 6, 9)) / (28 * 864e5))
+  return `Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:${v}.0) Gecko/20100101 Firefox/${v}.0`
+})()
+const GOOGLE_LOGIN = /^https:\/\/accounts\.(google|youtube)\.com\//
+
 // ═════════════════ الإضافات المدمجة: البروكسي + حاجب الإعلانات + فاحص الفيروسات ═════════════════
 function setupFeatures() {
   const ctx = {
@@ -1318,6 +1400,14 @@ function attachNetPipeline(s) {
       }
       cb(adblock.onBeforeRequest(d) || {})
     } catch (e) { cb({}) }
+  })
+  // تسجيل الدخول لحساب Google: صفحة الدخول ترفض المتصفحات المبنية على Chromium المعدّل،
+  // فنقدّم لها هوية Firefox على صفحات تسجيل الدخول فقط (باقي المواقع ترى IBRA CROM كـ Chrome عادي)
+  s.webRequest.onBeforeSendHeaders({ urls: ['https://accounts.google.com/*', 'https://accounts.youtube.com/*'] }, (d, cb) => {
+    const h = d.requestHeaders
+    h['User-Agent'] = FIREFOX_UA
+    for (const k of Object.keys(h)) if (/^sec-ch-ua/i.test(k)) delete h[k]
+    cb({ requestHeaders: h })
   })
   s.webRequest.onHeadersReceived({ urls: ['<all_urls>'] }, (d, cb) => {
     try { sniffMedia(d) } catch {}
