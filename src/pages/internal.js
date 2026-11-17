@@ -147,7 +147,7 @@ PAGES.settings = async () => {
     <h2>IBDM Pro — مدير التحميل المدمج</h2>
     <div class="card">
       <div class="row"><div class="ric ibdm-ic">${I.download}</div><div class="rt"><b>${CFG.ibdm ? 'متصل ببرنامج IBDM Pro ' + esc(CFG.ibdm.version || '') : 'برنامج IBDM Pro غير مشغّل'}</b><span>${CFG.ibdm ? 'التحميلات تُسلَّم له تلقائياً حسب أنواع الملفات المحددة في البرنامج' : 'شغّل IBDM Pro ليستلم التحميلات، وإلا يحمّل المتصفح بنفسه'}</span></div>
-        ${CFG.ibdm ? `<button class="btn" id="ibdmshow">فتح IBDM Pro</button>` : `<button class="btn" id="ibdmcheck">${I.refresh} إعادة الفحص</button><a class="btn" href="https://t.me/ibraprogram">تحميل IBDM Pro</a>`}</div>
+        ${CFG.ibdm ? `<button class="btn" id="ibdmshow">فتح IBDM Pro</button>` : `<button class="btn" id="ibdmcheck">${I.refresh} إعادة الفحص</button><a class="btn" href="https://ibraprogram.netlify.app/">تحميل IBDM Pro</a>`}</div>
       ${sw('ibdmCapture', 'تسليم التحميلات لـ IBDM Pro بدل المتصفح', 'زر IBDM في شريط الأدوات يعرض الفيديوهات الموجودة في الصفحة لتحميلها بالجودة التي تختارها')}
     </div>
     <h2 id="proxy">البروكسي (IBRA Proxy)</h2>
@@ -612,7 +612,11 @@ async function drawUpdateStatus() {
 PAGES.about = async () => {
   const a = await ibra.appInfo()
   app.innerHTML = shell('about', `<h1>حول IBRA CROM</h1>
-    <div class="card about-hero"><img src="../assets/logo.png" alt=""><div><h3>IBRA CROM</h3><p>الإصدار ${esc(a.version)} — مبني على محرك Chromium ${esc(a.chrome)}</p><p class="by">برمجة و تطوير <b>ابراهيم الخزرجي</b></p><p><a href="https://t.me/ibraprogram">قناة IBRAPROGRAM على تيليجرام</a></p></div></div>
+    <div class="card about-hero"><img src="../assets/logo.png" alt=""><div><h3>IBRA CROM</h3><p>الإصدار ${esc(a.version)} — مبني على محرك Chromium ${esc(a.chrome)}</p><p class="by">برمجة و تطوير <b>ابراهيم الخزرجي</b></p><div class="about-links">
+      <a class="al main" href="https://ibraprogram.netlify.app/">${I.globe}<span>موقع تطبيقات IBRAPROGRAM<small dir="ltr">ibraprogram.netlify.app</small></span></a>
+      <a class="al" href="https://t.me/ibraprogram">${I.share}<span>تيليجرام<small dir="ltr">t.me/ibraprogram</small></span></a>
+      <a class="al" href="https://www.tiktok.com/@ibraprogram">${I.media}<span>تيك توك<small dir="ltr">@ibraprogram</small></span></a>
+    </div></div></div>
     <h2>التحديثات</h2>
     <div class="card"><div class="row"><div class="rt"><b id="ust">—</b><span>يتحقق IBRA CROM من وجود تحديثات تلقائياً كل 6 ساعات من صفحة الإصدارات</span></div><button class="btn primary" id="ubtn">البحث عن تحديثات</button></div></div>
     <h2>تفاصيل تقنية</h2>

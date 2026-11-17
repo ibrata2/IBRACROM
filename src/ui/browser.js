@@ -449,7 +449,10 @@ function subItems(id) {
       it('checkUpdate', I.update, 'البحث عن تحديثات'),
       it('whatsNew', I.sparkle, 'ما الجديد'),
       it('reportIssue', I.warn, 'الإبلاغ عن مشكلة...'),
+      '-',
+      it('appsSite', I.globe, 'موقع تطبيقات IBRAPROGRAM'),
       it('telegram', I.share, 'قناة IBRAPROGRAM على تيليجرام'),
+      it('tiktok', I.media, 'IBRAPROGRAM على تيك توك'),
     ]
   }
   return []

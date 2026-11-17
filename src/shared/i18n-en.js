@@ -677,7 +677,11 @@
  "استعادة": "Restore",
  "لا شكراً": "No thanks",
  "فتح ألسن الجلسة السابقة": "Reopen tabs from last session",
- "السؤال عن فتح الألسن السابقة": "Ask whether to reopen previous tabs"
+ "السؤال عن فتح الألسن السابقة": "Ask whether to reopen previous tabs",
+ "موقع تطبيقات IBRAPROGRAM": "IBRAPROGRAM apps website",
+ "تيليجرام": "Telegram",
+ "تيك توك": "TikTok",
+ "IBRAPROGRAM على تيك توك": "IBRAPROGRAM on TikTok"
 }
   if (typeof module !== 'undefined') module.exports = EN; else root.IBRA_EN = EN
 })(typeof window !== 'undefined' ? window : globalThis)
