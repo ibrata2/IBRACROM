@@ -21,6 +21,7 @@ module.exports = function createAdblock(ctx) {
   function countFilters() { try { const f = engine.getFilters(); filtersCount = f.networkFilters.length + f.cosmeticFilters.length } catch { filtersCount = 0 } }
   const tabCounts = new Map() // webContentsId -> عدد الإعلانات المحجوبة في الصفحة الحالية
   const stats = ctx.store.load('adblockStats', { total: 0 })
+  const ytStats = ctx.store.load('ytSkipStats', { total: 0 })
   const cacheFile = path.join(ctx.userData, 'adblock', 'engine.bin')
   const seedFile = path.join(ctx.vendorDir, 'adblock', 'engine.bin')
 
@@ -134,13 +135,13 @@ module.exports = function createAdblock(ctx) {
   return {
     init, attach, refresh, onBeforeRequest, onHeadersReceived, siteAllowed, setSiteAllowed,
     // إعدادات IBRA YouTube للصفحة (تُقرأ من preload)
-    youtubeCfg: (url) => { const h = hostOf(url); return ytMode(h) && enabled() && !siteAllowed(h) ? { skip: true } : null },
-    countSkip: (id) => count(id),
+    youtubeCfg: (url) => ytMode(hostOf(url)) ? { skip: true } : null,
+    countSkip: () => { ytStats.total++; ctx.store.save('ytSkipStats', ytStats, 4000); if (!notifyT) notifyT = setTimeout(() => { notifyT = null; ctx.changed() }, 400) },
     resetTab: (id) => { if (tabCounts.delete(id)) ctx.changed() },
     tabCount: (id) => tabCounts.get(id) || 0,
     info: () => ({
       enabled: enabled(), ready: !!engine, updatedAt, refreshing: !!refreshing, total: stats.total,
-      filters: filtersCount, allow: allowList(), youtube: ctx.settings().adblockYoutube !== false,
+      filters: filtersCount, allow: allowList(), youtube: ctx.settings().adblockYoutube !== false, ytSkipped: ytStats.total,
     }),
   }
 }

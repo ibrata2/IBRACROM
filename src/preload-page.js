@@ -120,8 +120,9 @@ if (/(^|\.)(youtube\.com|youtube-nocookie\.com)$/.test(location.hostname)) {
       Object.defineProperty(window, '__ibraYT', { value: 1 })
       // ما نلعب ببيانات يوتيوب (يكشفها ويوكف المشغل) — بس نتخطى الإعلان لما يطلع
       const SKIP = '.ytp-skip-ad-button,.ytp-ad-skip-button,.ytp-ad-skip-button-modern,.ytp-ad-skip-button-slot button,.ytp-ad-skip-button-container button,[id^="skip-button"] button,button.ytp-skip-ad-button'
-      let saved = null, inAd = false, reloaded = false
+      let saved = null, inAd = false, reloaded = false, last = { id: '', t: 0 }, resumeUntil = 0
       try { reloaded = sessionStorage.getItem('__ibraYTreload') === location.href } catch (e) {}
+      const vid = () => { try { return new URL(location.href).searchParams.get('v') || location.pathname } catch (e) { return '' } }
       const tick = () => {
         const p = document.querySelector('#movie_player') || document.querySelector('.html5-video-player')
         const v = p && p.querySelector('video')
@@ -130,18 +131,25 @@ if (/(^|\.)(youtube\.com|youtube-nocookie\.com)$/.test(location.hostname)) {
           try { ssap = String(p.getStatsForNerds?.()?.debug_info || '').startsWith('SSAP, AD') } catch (e) {}
           const ad = ssap || p.classList.contains('ad-showing') || p.classList.contains('ad-interrupting')
           if (ad) {
-            // إعلان مدموج بنفس الفيديو (SSAP): نقفز لنهاية الإعلان عن طريق المشغل نفسه
-            try { const ps = p.getProgressState?.(); if (ps && ps.duration > 0 && ps.current < ps.duration - 0.3) p.seekTo?.(ps.duration) } catch (e) {}
-            if (!saved) saved = { m: v.muted, r: v.playbackRate }
+            // ما نقفز بالوقت أبداً (يرجّع الفيديو للبداية) — بس نكتم ونسرّع ونضغط «تخطي»
+            if (!saved) saved = { m: v.muted, r: v.playbackRate > 0 && v.playbackRate <= 4 ? v.playbackRate : 1 }
             if (!inAd) { inAd = true; window.dispatchEvent(new Event('ibra-yt-skip')) }
             v.muted = true
-            try { v.playbackRate = 16 } catch (e) {}
-            if (isFinite(v.duration) && v.duration > 0 && v.currentTime < v.duration - 0.3) { try { v.currentTime = v.duration - 0.1 } catch (e) {} }
+            try { if (v.playbackRate !== 16) v.playbackRate = 16 } catch (e) {}
             document.querySelectorAll(SKIP).forEach((b) => { try { b.click() } catch (e) {} })
-          } else if (saved) {
-            v.muted = saved.m
-            v.playbackRate = saved.r > 0 && saved.r <= 4 ? saved.r : 1
-            saved = null; inAd = false
+          } else {
+            if (saved) {
+              v.muted = saved.m
+              v.playbackRate = saved.r
+              saved = null; inAd = false
+              resumeUntil = Date.now() + 6000
+            }
+            // بعد الإعلان: إذا الفيديو رجع للبداية نرجعه لنفس المكان اللي جان بيه
+            const id = vid()
+            if (resumeUntil > Date.now() && last.id === id && last.t > 15 && v.currentTime < last.t - 15 && v.readyState > 0) {
+              try { v.currentTime = last.t } catch (e) {}
+              resumeUntil = 0
+            } else if (isFinite(v.currentTime) && v.currentTime > 1 && !v.seeking) last = { id, t: v.currentTime }
           }
           document.querySelectorAll('.ytp-ad-overlay-close-button,.ytp-ad-overlay-close-container button').forEach((b) => { try { b.click() } catch (e) {} })
         }

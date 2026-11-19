@@ -683,7 +683,15 @@
  "تيك توك": "TikTok",
  "IBRAPROGRAM على تيك توك": "IBRAPROGRAM on TikTok",
  "يوتيوب": "YouTube",
- "تخطي الإعلانات تلقائياً + منع رسالة «أوقف حاجب الإعلانات»": "Auto-skip ads + block the \"turn off your ad blocker\" message"
+ "تخطي الإعلانات تلقائياً + منع رسالة «أوقف حاجب الإعلانات»": "Auto-skip ads + block the \"turn off your ad blocker\" message",
+ "الحجب متوقف بيوتيوب — يتولاه «تخطي إعلانات يوتيوب»": "Off on YouTube — handled by \"YouTube Skip\"",
+ "يحجب بيوتيوب مثل باقي المواقع": "Blocks on YouTube like any other site",
+ "تخطي إعلانات يوتيوب تلقائياً — منفصل عن حاجب الإعلانات": "Auto-skips YouTube ads — separate from the ad blocker",
+ "إعلان يوتيوب تم تخطيه": "YouTube ads skipped",
+ "شلون يشتغل": "How it works",
+ "لما يطلع إعلان يكتمه ويسرّعه ويضغط «تخطي»، ويرجّع الفيديو لنفس الدقيقة إذا رجع للبداية": "When an ad appears it mutes it, speeds it up and clicks \"Skip\", and returns the video to the same minute if it jumps back to the start",
+ "ملاحظة": "Note",
+ "لما يكون شغّال، حاجب الإعلانات ما يحجب شي بيوتيوب حتى ما يكشفه يوتيوب ويوكّف الفيديو": "While on, the ad blocker blocks nothing on YouTube so YouTube does not detect it and stop the video"
 }
   if (typeof module !== 'undefined') module.exports = EN; else root.IBRA_EN = EN
 })(typeof window !== 'undefined' ? window : globalThis)
