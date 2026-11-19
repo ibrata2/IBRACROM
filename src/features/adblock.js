@@ -31,6 +31,8 @@ module.exports = function createAdblock(ctx) {
     return !!host && allowList().some(d => host === d || host.endsWith('.' + d))
   }
 
+  const ytMode = (h) => isYouTube(h) && ctx.settings().adblockYoutube !== false
+
   function loadFrom(file) {
     try {
       const buf = fs.readFileSync(file)
@@ -71,7 +73,7 @@ module.exports = function createAdblock(ctx) {
 
     // الإخفاء التجميلي (عناصر الإعلانات داخل الصفحة)
     ipcMain.handle('@ghostery/adblocker/inject-cosmetic-filters', (event, url, msg) => {
-      if (!engine || !enabled() || siteAllowed(hostOf(url)) || !/^https?:/i.test(url || '')) return
+      if (!engine || !enabled() || siteAllowed(hostOf(url)) || !/^https?:/i.test(url || '') || ytMode(hostOf(url))) return
       return engine.onInjectCosmeticFilters(event, url, msg)
     })
     ipcMain.handle('@ghostery/adblocker/is-mutation-observer-enabled', () => !!engine && enabled() && engine.config.enableMutationObserver)
@@ -97,9 +99,9 @@ module.exports = function createAdblock(ctx) {
     const pageUrl = wc && !wc.isDestroyed() ? wc.getURL() : (details.referrer || '')
     if (!/^https?:/i.test(pageUrl)) return null // صفحات IBRA والإضافات لا تُحجب
     if (siteAllowed(hostOf(pageUrl))) return null
-    // يوتيوب: ما نحجب طلبات يوتيوب نفسها (حجبها هو اللي يخلي يوتيوب يكشف حاجب الإعلانات)،
-    // الإعلانات تنشال من بيانات المشغل مباشرة داخل الصفحة (IBRA YouTube)
-    if (isYouTube(hostOf(pageUrl)) && /(^|\.)(youtube\.com|googlevideo\.com|ytimg\.com|ggpht\.com|youtube-nocookie\.com)$/.test(hostOf(details.url))) return null
+    // يوتيوب: أي حجب أو تعديل بالطلبات يخلي يوتيوب يكشف حاجب الإعلانات ويوكف المشغل،
+    // فبيوتيوب ما نحجب شي، و IBRA YouTube يتخطى الإعلان تلقائياً داخل المشغل
+    if (ytMode(hostOf(pageUrl))) return null
     const req = fromElectronDetails(details)
     if (engine.config.guessRequestTypeFromUrl === true && req.type === 'other') req.guessTypeOfRequest()
     const { redirect, match } = engine.match(req)
@@ -111,7 +113,7 @@ module.exports = function createAdblock(ctx) {
   function onHeadersReceived(details) {
     if (!engine || !enabled()) return null
     if (details.resourceType !== 'mainFrame' && details.resourceType !== 'subFrame') return null
-    if (siteAllowed(hostOf(details.url))) return null
+    if (siteAllowed(hostOf(details.url)) || ytMode(hostOf(details.url))) return null
     const raw = engine.getCSPDirectives(fromElectronDetails(details))
     if (raw === undefined) return null
     const headers = details.responseHeaders || {}
@@ -132,7 +134,7 @@ module.exports = function createAdblock(ctx) {
   return {
     init, attach, refresh, onBeforeRequest, onHeadersReceived, siteAllowed, setSiteAllowed,
     // إعدادات IBRA YouTube للصفحة (تُقرأ من preload)
-    youtubeCfg: (url) => { const h = hostOf(url); return isYouTube(h) && enabled() && !siteAllowed(h) ? { prune: true, skip: ctx.settings().adblockYoutube !== false } : null },
+    youtubeCfg: (url) => { const h = hostOf(url); return ytMode(h) && enabled() && !siteAllowed(h) ? { skip: true } : null },
     countSkip: (id) => count(id),
     resetTab: (id) => { if (tabCounts.delete(id)) ctx.changed() },
     tabCount: (id) => tabCounts.get(id) || 0,

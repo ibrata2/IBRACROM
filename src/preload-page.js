@@ -109,8 +109,8 @@ try { (() => {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start()
 })() } catch (e) {}
 
-// IBRA YouTube: يشيل إعلانات يوتيوب من بيانات المشغل قبل ما توصل، يخفي رسالة «أوقف حاجب الإعلانات»،
-// ويتخطى أي إعلان يطلع تلقائياً (جزء من IBRA AdBlock)
+// IBRA YouTube: يتخطى أي إعلان يطلع بيوتيوب تلقائياً (مكتوم وبسرعة) ويشيل رسالة «أوقف حاجب الإعلانات»،
+// بدون ما يحجب أو يعدّل طلبات يوتيوب حتى ما يكشفه (جزء من IBRA AdBlock)
 if (/(^|\.)(youtube\.com|youtube-nocookie\.com)$/.test(location.hostname)) {
   let ytCfg = null
   try { ytCfg = ipcRenderer.sendSync('yt:cfg', location.href) } catch {}
@@ -118,26 +118,7 @@ if (/(^|\.)(youtube\.com|youtube-nocookie\.com)$/.test(location.hostname)) {
     const ytMain = (cfg) => {
       if (window.__ibraYT) return
       Object.defineProperty(window, '__ibraYT', { value: 1 })
-      const KEYS = ['adPlacements', 'playerAds', 'adSlots', 'adBreakHeartbeatParams', 'adBreakParams']
-      const prune = (o, d = 0) => {
-        if (!o || typeof o !== 'object' || d > 4) return o
-        try {
-          if (Array.isArray(o)) { for (const x of o) prune(x, d + 1); return o }
-          for (const k of KEYS) if (k in o) delete o[k]
-          if (o.playerResponse) prune(o.playerResponse, d + 1)
-          if (o.response && typeof o.response === 'object') prune(o.response, d + 1)
-          if (o.playerConfig?.adRequestConfig) delete o.playerConfig.adRequestConfig
-        } catch (e) {}
-        return o
-      }
-      const hasAds = (r) => r && typeof r === 'object' && (Array.isArray(r) || 'adPlacements' in r || 'playerAds' in r || 'adSlots' in r || 'playerResponse' in r)
-      if (cfg.prune) {
-        try { JSON.parse = new Proxy(JSON.parse, { apply(t, th, a) { const r = Reflect.apply(t, th, a); try { if (hasAds(r)) prune(r) } catch (e) {} return r } }) } catch (e) {}
-        try { Response.prototype.json = new Proxy(Response.prototype.json, { apply(t, th, a) { return Reflect.apply(t, th, a).then((r) => { try { if (hasAds(r)) prune(r) } catch (e) {} return r }) } }) } catch (e) {}
-        for (const name of ['ytInitialPlayerResponse', 'playerResponse']) {
-          try { let v; Object.defineProperty(window, name, { configurable: true, get() { return v }, set(x) { v = prune(x) } }) } catch (e) {}
-        }
-      }
+      // ما نلعب ببيانات يوتيوب (يكشفها ويوكف المشغل) — بس نتخطى الإعلان لما يطلع
       const SKIP = '.ytp-skip-ad-button,.ytp-ad-skip-button,.ytp-ad-skip-button-modern,.ytp-ad-skip-button-slot button,.ytp-ad-skip-button-container button,[id^="skip-button"] button,button.ytp-skip-ad-button'
       let saved = null, inAd = false, reloaded = false
       try { reloaded = sessionStorage.getItem('__ibraYTreload') === location.href } catch (e) {}
@@ -145,8 +126,12 @@ if (/(^|\.)(youtube\.com|youtube-nocookie\.com)$/.test(location.hostname)) {
         const p = document.querySelector('#movie_player') || document.querySelector('.html5-video-player')
         const v = p && p.querySelector('video')
         if (cfg.skip && p && v) {
-          const ad = p.classList.contains('ad-showing') || p.classList.contains('ad-interrupting')
+          let ssap = false
+          try { ssap = String(p.getStatsForNerds?.()?.debug_info || '').startsWith('SSAP, AD') } catch (e) {}
+          const ad = ssap || p.classList.contains('ad-showing') || p.classList.contains('ad-interrupting')
           if (ad) {
+            // إعلان مدموج بنفس الفيديو (SSAP): نقفز لنهاية الإعلان عن طريق المشغل نفسه
+            try { const ps = p.getProgressState?.(); if (ps && ps.duration > 0 && ps.current < ps.duration - 0.3) p.seekTo?.(ps.duration) } catch (e) {}
             if (!saved) saved = { m: v.muted, r: v.playbackRate }
             if (!inAd) { inAd = true; window.dispatchEvent(new Event('ibra-yt-skip')) }
             v.muted = true
@@ -182,7 +167,7 @@ if (/(^|\.)(youtube\.com|youtube-nocookie\.com)$/.test(location.hostname)) {
       const start = () => { try { new MutationObserver(tick).observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ['class'], childList: true }) } catch (e) {} }
       if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start()
       // نخفي أماكن الإعلانات بالصفحة الرئيسية والبحث
-      const css = 'ytd-ad-slot-renderer,ytd-in-feed-ad-layout-renderer,ytd-promoted-sparkles-web-renderer,ytd-display-ad-renderer,ytd-companion-slot-renderer,ytd-player-legacy-desktop-watch-ads-renderer,#player-ads,#masthead-ad,ytd-banner-promo-renderer,ytd-statement-banner-renderer,ytd-rich-item-renderer:has(> #content > ytd-ad-slot-renderer),.ytp-ad-overlay-container,.ytp-ad-image-overlay,tp-yt-paper-dialog:has(ytd-enforcement-message-view-model){display:none!important}'
+      const css = 'ytd-ad-slot-renderer,ytd-in-feed-ad-layout-renderer,ytd-promoted-sparkles-web-renderer,ytd-display-ad-renderer,#masthead-ad,ytd-banner-promo-renderer,ytd-statement-banner-renderer,ytd-rich-item-renderer:has(> #content > ytd-ad-slot-renderer),.ytp-ad-overlay-container,.ytp-ad-image-overlay,tp-yt-paper-dialog:has(ytd-enforcement-message-view-model){display:none!important}'
       const addCss = () => { try { const st = document.createElement('style'); st.textContent = css; (document.head || document.documentElement).appendChild(st) } catch (e) {} }
       if (document.documentElement) addCss(); else document.addEventListener('DOMContentLoaded', addCss)
     }
