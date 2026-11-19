@@ -109,6 +109,91 @@ try { (() => {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start()
 })() } catch (e) {}
 
+// IBRA YouTube: يشيل إعلانات يوتيوب من بيانات المشغل قبل ما توصل، يخفي رسالة «أوقف حاجب الإعلانات»،
+// ويتخطى أي إعلان يطلع تلقائياً (جزء من IBRA AdBlock)
+if (/(^|\.)(youtube\.com|youtube-nocookie\.com)$/.test(location.hostname)) {
+  let ytCfg = null
+  try { ytCfg = ipcRenderer.sendSync('yt:cfg', location.href) } catch {}
+  if (ytCfg) {
+    const ytMain = (cfg) => {
+      if (window.__ibraYT) return
+      Object.defineProperty(window, '__ibraYT', { value: 1 })
+      const KEYS = ['adPlacements', 'playerAds', 'adSlots', 'adBreakHeartbeatParams', 'adBreakParams']
+      const prune = (o, d = 0) => {
+        if (!o || typeof o !== 'object' || d > 4) return o
+        try {
+          if (Array.isArray(o)) { for (const x of o) prune(x, d + 1); return o }
+          for (const k of KEYS) if (k in o) delete o[k]
+          if (o.playerResponse) prune(o.playerResponse, d + 1)
+          if (o.response && typeof o.response === 'object') prune(o.response, d + 1)
+          if (o.playerConfig?.adRequestConfig) delete o.playerConfig.adRequestConfig
+        } catch (e) {}
+        return o
+      }
+      const hasAds = (r) => r && typeof r === 'object' && (Array.isArray(r) || 'adPlacements' in r || 'playerAds' in r || 'adSlots' in r || 'playerResponse' in r)
+      if (cfg.prune) {
+        try { JSON.parse = new Proxy(JSON.parse, { apply(t, th, a) { const r = Reflect.apply(t, th, a); try { if (hasAds(r)) prune(r) } catch (e) {} return r } }) } catch (e) {}
+        try { Response.prototype.json = new Proxy(Response.prototype.json, { apply(t, th, a) { return Reflect.apply(t, th, a).then((r) => { try { if (hasAds(r)) prune(r) } catch (e) {} return r }) } }) } catch (e) {}
+        for (const name of ['ytInitialPlayerResponse', 'playerResponse']) {
+          try { let v; Object.defineProperty(window, name, { configurable: true, get() { return v }, set(x) { v = prune(x) } }) } catch (e) {}
+        }
+      }
+      const SKIP = '.ytp-skip-ad-button,.ytp-ad-skip-button,.ytp-ad-skip-button-modern,.ytp-ad-skip-button-slot button,.ytp-ad-skip-button-container button,[id^="skip-button"] button,button.ytp-skip-ad-button'
+      let saved = null, inAd = false, reloaded = false
+      try { reloaded = sessionStorage.getItem('__ibraYTreload') === location.href } catch (e) {}
+      const tick = () => {
+        const p = document.querySelector('#movie_player') || document.querySelector('.html5-video-player')
+        const v = p && p.querySelector('video')
+        if (cfg.skip && p && v) {
+          const ad = p.classList.contains('ad-showing') || p.classList.contains('ad-interrupting')
+          if (ad) {
+            if (!saved) saved = { m: v.muted, r: v.playbackRate }
+            if (!inAd) { inAd = true; window.dispatchEvent(new Event('ibra-yt-skip')) }
+            v.muted = true
+            try { v.playbackRate = 16 } catch (e) {}
+            if (isFinite(v.duration) && v.duration > 0 && v.currentTime < v.duration - 0.3) { try { v.currentTime = v.duration - 0.1 } catch (e) {} }
+            document.querySelectorAll(SKIP).forEach((b) => { try { b.click() } catch (e) {} })
+          } else if (saved) {
+            v.muted = saved.m
+            v.playbackRate = saved.r > 0 && saved.r <= 4 ? saved.r : 1
+            saved = null; inAd = false
+          }
+          document.querySelectorAll('.ytp-ad-overlay-close-button,.ytp-ad-overlay-close-container button').forEach((b) => { try { b.click() } catch (e) {} })
+        }
+        // رسالة «حاجبات الإعلانات غير مسموح بها» — نشيلها ونكمل الفيديو
+        const enf = document.querySelector('ytd-enforcement-message-view-model')
+        if (enf) {
+          const dlg = enf.closest('tp-yt-paper-dialog, ytd-popup-container tp-yt-paper-dialog') || enf
+          dlg.remove()
+          document.querySelectorAll('tp-yt-iron-overlay-backdrop').forEach((x) => x.remove())
+          document.body && document.body.style.removeProperty('overflow')
+          if (v && v.paused) v.play().catch(() => {})
+        }
+        // إذا يوتيوب وقف المشغل نفسه برسالة حاجب الإعلانات، نعيد تحميل الفيديو مرة وحدة من نفس الدقيقة
+        const err = p && p.querySelector('.ytp-error')
+        if (err && !reloaded && /ad ?block|حاجب|مانع/i.test(err.textContent || '')) {
+          reloaded = true
+          try { sessionStorage.setItem('__ibraYTreload', location.href) } catch (e) {}
+          const u = new URL(location.href); if (v && v.currentTime > 1) u.searchParams.set('t', Math.floor(v.currentTime) + 's')
+          location.replace(u.toString())
+        }
+      }
+      setInterval(tick, 250)
+      const start = () => { try { new MutationObserver(tick).observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ['class'], childList: true }) } catch (e) {} }
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start()
+      // نخفي أماكن الإعلانات بالصفحة الرئيسية والبحث
+      const css = 'ytd-ad-slot-renderer,ytd-in-feed-ad-layout-renderer,ytd-promoted-sparkles-web-renderer,ytd-display-ad-renderer,ytd-companion-slot-renderer,ytd-player-legacy-desktop-watch-ads-renderer,#player-ads,#masthead-ad,ytd-banner-promo-renderer,ytd-statement-banner-renderer,ytd-rich-item-renderer:has(> #content > ytd-ad-slot-renderer),.ytp-ad-overlay-container,.ytp-ad-image-overlay,tp-yt-paper-dialog:has(ytd-enforcement-message-view-model){display:none!important}'
+      const addCss = () => { try { const st = document.createElement('style'); st.textContent = css; (document.head || document.documentElement).appendChild(st) } catch (e) {} }
+      if (document.documentElement) addCss(); else document.addEventListener('DOMContentLoaded', addCss)
+    }
+    try {
+      if (contextBridge.executeInMainWorld) contextBridge.executeInMainWorld({ func: ytMain, args: [ytCfg] })
+      else webFrame.executeJavaScript('(' + ytMain.toString() + ')(' + JSON.stringify(ytCfg) + ')')
+    } catch (e) { try { webFrame.executeJavaScript('(' + ytMain.toString() + ')(' + JSON.stringify(ytCfg) + ')') } catch (e2) {} }
+    window.addEventListener('ibra-yt-skip', () => { try { ipcRenderer.send('yt:skipped') } catch (e) {} })
+  }
+}
+
 // تسجيل الدخول لحساب Google: نخفي بصمة Chromium المعدّل حتى لا يرفض Google المتصفح
 if (location.hostname === 'accounts.google.com') {
   try { webFrame.executeJavaScript("try { Object.defineProperty(Navigator.prototype, 'userAgentData', { get: () => undefined, configurable: true }) } catch (e) {}") } catch {}

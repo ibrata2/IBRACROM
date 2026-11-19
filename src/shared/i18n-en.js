@@ -681,7 +681,9 @@
  "موقع تطبيقات IBRAPROGRAM": "IBRAPROGRAM apps website",
  "تيليجرام": "Telegram",
  "تيك توك": "TikTok",
- "IBRAPROGRAM على تيك توك": "IBRAPROGRAM on TikTok"
+ "IBRAPROGRAM على تيك توك": "IBRAPROGRAM on TikTok",
+ "يوتيوب": "YouTube",
+ "تخطي الإعلانات تلقائياً + منع رسالة «أوقف حاجب الإعلانات»": "Auto-skip ads + block the \"turn off your ad blocker\" message"
 }
   if (typeof module !== 'undefined') module.exports = EN; else root.IBRA_EN = EN
 })(typeof window !== 'undefined' ? window : globalThis)

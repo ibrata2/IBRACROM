@@ -10,6 +10,7 @@ const PRELOAD_PATH = require.resolve('@ghostery/adblocker-electron-preload')
 const LISTS = [...fullLists, 'https://raw.githubusercontent.com/easylist/listear/master/Liste_AR.txt']
 const REFRESH_MS = 24 * 3600e3
 
+const isYouTube = (h) => /(^|\.)(youtube\.com|youtube-nocookie\.com)$/.test(h || '')
 function hostOf(u) { try { return new URL(u).hostname.toLowerCase() } catch { return '' } }
 
 module.exports = function createAdblock(ctx) {
@@ -96,6 +97,9 @@ module.exports = function createAdblock(ctx) {
     const pageUrl = wc && !wc.isDestroyed() ? wc.getURL() : (details.referrer || '')
     if (!/^https?:/i.test(pageUrl)) return null // صفحات IBRA والإضافات لا تُحجب
     if (siteAllowed(hostOf(pageUrl))) return null
+    // يوتيوب: ما نحجب طلبات يوتيوب نفسها (حجبها هو اللي يخلي يوتيوب يكشف حاجب الإعلانات)،
+    // الإعلانات تنشال من بيانات المشغل مباشرة داخل الصفحة (IBRA YouTube)
+    if (isYouTube(hostOf(pageUrl)) && /(^|\.)(youtube\.com|googlevideo\.com|ytimg\.com|ggpht\.com|youtube-nocookie\.com)$/.test(hostOf(details.url))) return null
     const req = fromElectronDetails(details)
     if (engine.config.guessRequestTypeFromUrl === true && req.type === 'other') req.guessTypeOfRequest()
     const { redirect, match } = engine.match(req)
@@ -127,11 +131,14 @@ module.exports = function createAdblock(ctx) {
 
   return {
     init, attach, refresh, onBeforeRequest, onHeadersReceived, siteAllowed, setSiteAllowed,
+    // إعدادات IBRA YouTube للصفحة (تُقرأ من preload)
+    youtubeCfg: (url) => { const h = hostOf(url); return isYouTube(h) && enabled() && !siteAllowed(h) ? { prune: true, skip: ctx.settings().adblockYoutube !== false } : null },
+    countSkip: (id) => count(id),
     resetTab: (id) => { if (tabCounts.delete(id)) ctx.changed() },
     tabCount: (id) => tabCounts.get(id) || 0,
     info: () => ({
       enabled: enabled(), ready: !!engine, updatedAt, refreshing: !!refreshing, total: stats.total,
-      filters: filtersCount, allow: allowList(),
+      filters: filtersCount, allow: allowList(), youtube: ctx.settings().adblockYoutube !== false,
     }),
   }
 }

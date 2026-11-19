@@ -366,6 +366,7 @@ function builtinCards(F) {
     <div class="card bext ${A.enabled ? '' : 'dim'}"><div class="bh"><span class="bic">${I.ad}</span><div class="bt"><b>IBRA AdBlock</b><small>يحجب الإعلانات والمتتبعات والنوافذ المزعجة في كل المواقع</small></div>${swb('adblockEnabled', A.enabled)}</div>
       <div class="bnum"><b>${fmtN(A.total)}</b><span>إعلان ومتتبع محجوب منذ التثبيت</span></div>
       <div class="bl"><span>القوائم</span><b>${A.ready ? fmtN(A.filters) + ' قاعدة · ' + when(A.updatedAt) : (A.refreshing ? 'جاري التحميل…' : 'لم تُحمّل بعد')}</b></div>
+      <div class="bl"><span>يوتيوب</span><b>تخطي الإعلانات تلقائياً + منع رسالة «أوقف حاجب الإعلانات»</b>${swb('adblockYoutube', A.youtube !== false && A.enabled)}</div>
       ${A.allow.length ? `<div class="bl col"><span>مواقع أوقفت الحجب عليها</span><div class="chips">${A.allow.map(h => `<span class="chipx" dir="ltr">${esc(h)}<button data-unallow="${esc(h)}" title="إعادة الحجب">×</button></span>`).join('')}</div></div>` : ''}
       <div class="bf"><button class="btn" id="ad-up">${I.refresh} تحديث القوائم</button></div></div>
 

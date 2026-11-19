@@ -63,7 +63,7 @@ const DEFAULT_SETTINGS = {
   aiProvider: 'gemini',
   bmMirror: { enabled: true, profile: '' }, // إشارات حساب Chrome تحت شريط العنوان
   // ── الإضافات المدمجة ──
-  adblockEnabled: true, adblockAllow: [],
+  adblockEnabled: true, adblockAllow: [], adblockYoutube: true,
   shieldEnabled: true, shieldScanDownloads: true,
   proxyEnabled: true, proxyMode: 'tor', torTransport: 'auto', torBridges: '',
   proxyCustom: { scheme: 'socks5', host: '', port: '', user: '', pass: '' },
@@ -1313,6 +1313,8 @@ function setupIpc() {
   ipcMain.on('menu:action', (e, a, arg) => menuAction(W(e), a, arg))
   ipcMain.on('feature:lang', (e, l) => { if (l === 'ar' || l === 'en') setSettings({ language: l }) })
   // مجموعات الألسن
+  ipcMain.on('yt:cfg', (e, url) => { try { e.returnValue = adblock ? adblock.youtubeCfg(String(url || e.sender.getURL() || '')) : null } catch { e.returnValue = null } })
+  ipcMain.on('yt:skipped', (e) => { try { adblock?.countSkip(e.sender.id) } catch {} })
   ipcMain.on('restore:yes', (e, always) => { const w = W(e); if (always) setSettings({ startup: 'restore' }); if (w) w.restoreOffer = 0; restorePrev(w) })
   ipcMain.on('restore:no', (e, never) => { const w = W(e); if (w) { w.restoreOffer = 0; w.sendState() } if (never) setSettings({ startup: 'newtab' }) })
   ipcMain.on('group:toggle', (e, gid) => { const w = W(e); const g = w?.groups.get(gid); if (g) w.setGroup(gid, { collapsed: !g.collapsed }) })
@@ -1451,7 +1453,7 @@ function setupIpc() {
     proxy: proxy.info(), adblock: adblock.info(), shield: shield.info(),
     ibdm: { version: ibdmExt.version, source: ibdmExt.source, app: IBDM.cfg ? IBDM.cfg.version : null },
   }))
-  handle('setFeature', (w, e, key, val) => { if (['adblockEnabled', 'shieldEnabled', 'proxyEnabled', 'shieldScanDownloads'].includes(key)) setSettings({ [key]: !!val }); return true })
+  handle('setFeature', (w, e, key, val) => { if (['adblockEnabled', 'adblockYoutube', 'shieldEnabled', 'proxyEnabled', 'shieldScanDownloads'].includes(key)) setSettings({ [key]: !!val }); return true })
   handle('adblockRefresh', () => adblock.refresh())
   handle('adblockAllowRemove', (w, e, host) => { adblock.setSiteAllowed(host, false); return adblock.info() })
   handle('shieldRefresh', () => shield.refresh(true))
