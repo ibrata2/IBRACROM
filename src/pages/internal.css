@@ -325,3 +325,7 @@ table.tasks tr.sys td { color: var(--muted); }
 .incog-ntp .inc-cols > div { flex: 1; min-width: 240px; color: var(--muted); line-height: 1.9; }
 .incog-ntp .inc-cols b { color: var(--text); font-weight: 600; }
 .incog-ntp ul { padding-inline-start: 20px; margin: 6px 0 0; }
+
+/* ═════════ سلايد شو IBRA STORE (ويندوز) ═════════ */
+:root { --ibra-accent: var(--red); }
+.ntp-store { width: min(760px, 92vw); margin-top: 28px; }

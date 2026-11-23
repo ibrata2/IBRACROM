@@ -102,11 +102,14 @@ PAGES.newtab = async () => {
       <button class="btn" data-go="ibra://history">${I.history} السجل</button>
       <button class="btn" data-go="ibra://settings">${I.settings} الإعدادات</button>
     </div>
+    <div id="storeSlider" class="ntp-store" hidden></div>
     <div class="foot">IBRA CROM — مبني على محرك Chromium · برمجة و تطوير <b>ابراهيم الخزرجي</b></div>
   </div>`
   app.querySelectorAll('.ti img').forEach(img => img.addEventListener('error', () => { img.replaceWith(document.createTextNode(img.dataset.l)) }))
   app.querySelector('#sf').addEventListener('submit', (e) => { e.preventDefault(); const v = app.querySelector('#q').value.trim(); if (v) ibra.navigate(v) })
   app.querySelectorAll('[data-go]').forEach(b => b.addEventListener('click', () => ibra.navigate(b.dataset.go)))
+  // سلايد شو آخر البرامج والألعاب من IBRA STORE — بنسخة ويندوز فقط
+  if (CFG.platform === 'win32') window.IbraStoreSlider?.mount(app.querySelector('#storeSlider'))
   setTimeout(() => app.querySelector('#q')?.focus(), 50)
 }
 

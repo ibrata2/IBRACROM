@@ -1367,7 +1367,7 @@ function setupIpc() {
   // ── صفحات IBRA الداخلية ──
   const P = (e) => { const u = e.senderFrame?.url || e.sender.getURL(); if (!u.startsWith(PAGES_URL)) throw new Error('denied'); return winOfTab(e.sender) }
   const handle = (n, fn) => ipcMain.handle('page:' + n, (e, ...a) => { const w = P(e); return fn(w, e, ...a) })
-  handle('getSettings', (w) => ({ settings, incognito: !!w?.incognito, blur: HAS_BLUR, ibdm: IBDM.cfg ? { version: IBDM.cfg.version } : null, engines: Object.fromEntries(Object.entries(ENGINES).map(([k, v]) => [k, v.name])), downloadsDir: downloadsDir() }))
+  handle('getSettings', (w) => ({ settings, platform: process.platform, incognito: !!w?.incognito, blur: HAS_BLUR, ibdm: IBDM.cfg ? { version: IBDM.cfg.version } : null, engines: Object.fromEntries(Object.entries(ENGINES).map(([k, v]) => [k, v.name])), downloadsDir: downloadsDir() }))
   handle('setSettings', (w, e, patch) => { setSettings(patch || {}); return settings })
   handle('resetSettings', () => { setSettings(Object.assign({}, DEFAULT_SETTINGS)); return settings })
   handle('history', (w, e, q) => {

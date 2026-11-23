@@ -3,6 +3,13 @@
 // {} = any value (number, name, site...). Add new keys here when adding Arabic UI text.
 ;(function (root) {
   const EN = {
+ "عرض البرنامج ←": "View app →",
+ "· الجديد": "· New",
+ "الجديد": "New",
+ "السابق": "Previous",
+ "التالي": "Next",
+ "آخر البرامج والألعاب من IBRA STORE": "Latest apps and games from IBRA STORE",
+ "STORE · الجديد": "STORE · New",
  "\"؟": "\"?",
  "؟": "?",
  "،": ",",
